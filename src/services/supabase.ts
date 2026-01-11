@@ -4,9 +4,16 @@ import type { Database } from '../types/database.types';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+// Debug logging
+console.log('Supabase Config:', {
+  url: supabaseUrl ? supabaseUrl.substring(0, 30) + '...' : 'MISSING',
+  keyPresent: !!supabaseAnonKey,
+  keyLength: supabaseAnonKey?.length || 0,
+});
+
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn(
-    'Missing Supabase environment variables. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your .env.local file.'
+  console.error(
+    'MISSING Supabase environment variables! Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY'
   );
 }
 
