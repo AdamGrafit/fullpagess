@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(npm create:*)",
+      "Bash(npm run dev:*)",
+      "Bash(cat:*)",
+      "Bash(claude mcp list:*)",
+      "Bash(lsof:*)",
+      "Bash(timeout 5 npx figma-developer-mcp:*)",
+      "Bash(curl:*)",
+      "Bash(npx figma-developer-mcp:*)",
+      "Bash(npm view:*)",
+      "mcp__figma-desktop__get_design_context",
+      "mcp__figma-desktop__get_screenshot",
+      "WebSearch",
+      "Bash(ssh -i /Users/Huawei/Desktop/Grafit/ClaudeReactFigma/server_key.pem ubuntu@3.75.174.180 'sudo tee /etc/systemd/system/xvfb.service > /dev/null << EOF\n[Unit]\nDescription=X Virtual Frame Buffer Service\nAfter=network.target\n\n[Service]\nExecStart=/usr/bin/Xvfb :99 -screen 0 1024x768x24\nRestart=always\n\n[Install]\nWantedBy=multi-user.target\nEOF\nsudo systemctl daemon-reload && sudo systemctl enable xvfb && sudo systemctl start xvfb && sudo systemctl status xvfb')",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Bash(git init:*)",
+      "Bash(git remote:*)",
+      "Bash(git remote add:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
