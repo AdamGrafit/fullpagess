@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { MainLayout } from '../components/layout/MainLayout';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -8,6 +8,7 @@ import { Select } from '../components/ui/Select';
 import { ProgressBar } from '../components/ui/ProgressBar';
 import { Badge } from '../components/ui/Badge';
 import { supabase } from '../services/supabase';
+import type { Session } from '@supabase/supabase-js';
 
 interface DiscoveredUrl {
   url: string;
@@ -25,6 +26,9 @@ export function GeneratorPage() {
   const [urls, setUrls] = useState<DiscoveredUrl[]>([]);
   const [searchFilter, setSearchFilter] = useState('');
 
+  // Session state
+  const [session, setSession] = useState<Session | null>(null);
+
   // Screenshot options
   const [fullPage, setFullPage] = useState(true);
   const [scrollPage, setScrollPage] = useState(false);
@@ -34,6 +38,23 @@ export function GeneratorPage() {
 
   // Generation progress
   const [generationProgress, setGenerationProgress] = useState({ completed: 0, total: 0 });
+
+  // Listen for auth changes
+  useEffect(() => {
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log('Initial session:', session ? 'exists' : 'null');
+      setSession(session);
+    });
+
+    // Subscribe to auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log('Auth state changed:', _event, session ? 'session exists' : 'no session');
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   const viewportOptions = [
     { value: 'desktop', label: 'Desktop (1920x1080)' },
@@ -71,33 +92,16 @@ export function GeneratorPage() {
     setDiscoveryMessage('Searching for sitemap.xml...');
 
     try {
-      // Get auth token with timeout
-      console.log('Getting session...');
-
-      const sessionPromise = supabase.auth.getSession();
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Session timeout after 5s')), 5000)
-      );
-
-      const { data: { session }, error: sessionError } = await Promise.race([
-        sessionPromise,
-        timeoutPromise
-      ]) as Awaited<ReturnType<typeof supabase.auth.getSession>>;
-
-      console.log('Session result:', { session: session ? 'exists' : 'null', error: sessionError });
-
-      if (sessionError) {
-        console.error('Session error:', sessionError);
-        setDiscoveryStatus('error');
-        setDiscoveryMessage(`Auth error: ${sessionError.message}`);
-        return;
-      }
+      // Use session from state (set by onAuthStateChange)
+      console.log('Using session from state:', session ? 'exists' : 'null');
 
       if (!session) {
         setDiscoveryStatus('error');
         setDiscoveryMessage('Please log in to discover sitemaps.');
         return;
       }
+
+      console.log('Access token present:', !!session.access_token);
 
       // Call sitemap discovery API
       console.log('Calling /api/sitemap/discover with domain:', cleanDomain);
