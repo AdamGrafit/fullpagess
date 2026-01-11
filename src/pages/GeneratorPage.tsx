@@ -71,9 +71,19 @@ export function GeneratorPage() {
     setDiscoveryMessage('Searching for sitemap.xml...');
 
     try {
-      // Get auth token
+      // Get auth token with timeout
       console.log('Getting session...');
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+      const sessionPromise = supabase.auth.getSession();
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Session timeout after 5s')), 5000)
+      );
+
+      const { data: { session }, error: sessionError } = await Promise.race([
+        sessionPromise,
+        timeoutPromise
+      ]) as Awaited<ReturnType<typeof supabase.auth.getSession>>;
+
       console.log('Session result:', { session: session ? 'exists' : 'null', error: sessionError });
 
       if (sessionError) {
