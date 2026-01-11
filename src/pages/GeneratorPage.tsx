@@ -41,9 +41,31 @@ export function GeneratorPage() {
     { value: 'mobile', label: 'Mobile (375x667)' },
   ];
 
+  // Normalize domain - extract clean domain from any URL format
+  const normalizeDomain = (input: string): string => {
+    let cleaned = input.trim();
+
+    // Remove protocol
+    cleaned = cleaned.replace(/^https?:\/\//, '');
+
+    // Remove www.
+    cleaned = cleaned.replace(/^www\./, '');
+
+    // Remove path, query, hash
+    cleaned = cleaned.split('/')[0].split('?')[0].split('#')[0];
+
+    // Remove port
+    cleaned = cleaned.split(':')[0];
+
+    return cleaned;
+  };
+
   const handleDiscoverSitemap = async () => {
     console.log('handleDiscoverSitemap called, domain:', domain);
     if (!domain) return;
+
+    const cleanDomain = normalizeDomain(domain);
+    console.log('Normalized domain:', cleanDomain);
 
     setDiscoveryStatus('discovering');
     setDiscoveryMessage('Searching for sitemap.xml...');
@@ -51,8 +73,16 @@ export function GeneratorPage() {
     try {
       // Get auth token
       console.log('Getting session...');
-      const { data: { session } } = await supabase.auth.getSession();
-      console.log('Session:', session ? 'exists' : 'null');
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      console.log('Session result:', { session: session ? 'exists' : 'null', error: sessionError });
+
+      if (sessionError) {
+        console.error('Session error:', sessionError);
+        setDiscoveryStatus('error');
+        setDiscoveryMessage(`Auth error: ${sessionError.message}`);
+        return;
+      }
+
       if (!session) {
         setDiscoveryStatus('error');
         setDiscoveryMessage('Please log in to discover sitemaps.');
@@ -60,14 +90,14 @@ export function GeneratorPage() {
       }
 
       // Call sitemap discovery API
-      console.log('Calling /api/sitemap/discover...');
+      console.log('Calling /api/sitemap/discover with domain:', cleanDomain);
       const response = await fetch('/api/sitemap/discover', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ domain }),
+        body: JSON.stringify({ domain: cleanDomain }),
       });
 
       console.log('Response status:', response.status);
@@ -91,6 +121,7 @@ export function GeneratorPage() {
         setDiscoveryMessage('No sitemap found. Starting Screaming Frog crawl...');
 
         // Call start-crawl API
+        console.log('Starting crawl for domain:', cleanDomain);
         const crawlResponse = await fetch('/api/sitemap/start-crawl', {
           method: 'POST',
           headers: {
@@ -98,10 +129,11 @@ export function GeneratorPage() {
             'Authorization': `Bearer ${session.access_token}`,
           },
           body: JSON.stringify({
-            domain,
+            domain: cleanDomain,
             sitemapJobId: data.jobId,
           }),
         });
+        console.log('Crawl response status:', crawlResponse.status);
 
         const crawlData = await crawlResponse.json();
 
