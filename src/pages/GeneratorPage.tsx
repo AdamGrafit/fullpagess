@@ -42,6 +42,7 @@ export function GeneratorPage() {
   ];
 
   const handleDiscoverSitemap = async () => {
+    console.log('handleDiscoverSitemap called, domain:', domain);
     if (!domain) return;
 
     setDiscoveryStatus('discovering');
@@ -49,7 +50,9 @@ export function GeneratorPage() {
 
     try {
       // Get auth token
+      console.log('Getting session...');
       const { data: { session } } = await supabase.auth.getSession();
+      console.log('Session:', session ? 'exists' : 'null');
       if (!session) {
         setDiscoveryStatus('error');
         setDiscoveryMessage('Please log in to discover sitemaps.');
@@ -57,6 +60,7 @@ export function GeneratorPage() {
       }
 
       // Call sitemap discovery API
+      console.log('Calling /api/sitemap/discover...');
       const response = await fetch('/api/sitemap/discover', {
         method: 'POST',
         headers: {
@@ -66,7 +70,9 @@ export function GeneratorPage() {
         body: JSON.stringify({ domain }),
       });
 
+      console.log('Response status:', response.status);
       const data = await response.json();
+      console.log('Response data:', data);
 
       if (!response.ok) {
         throw new Error(data.error || 'Failed to discover sitemap');
@@ -150,6 +156,7 @@ export function GeneratorPage() {
         setDiscoveryMessage('No URLs found.');
       }
     } catch (error) {
+      console.error('Discovery error:', error);
       setDiscoveryStatus('error');
       setDiscoveryMessage((error as Error).message || 'Failed to discover URLs. Please try again.');
     }
