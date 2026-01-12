@@ -377,8 +377,8 @@ export function GeneratorPage() {
         throw new Error(data.error || 'Failed to create screenshot jobs');
       }
 
-      // Store job IDs and start polling
-      const jobIds = data.jobs.map((j: { id: string }) => j.id);
+      // Store job IDs and start polling (API returns jobIds array directly)
+      const jobIds = data.jobIds as string[];
       console.log('Created screenshot jobs:', jobIds);
 
       // Start polling for job status
