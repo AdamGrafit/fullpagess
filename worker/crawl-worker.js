@@ -67,21 +67,26 @@ function checkScreamingFrog() {
 async function runCrawl(domain, jobId, maxUrls = 500) {
   const outputDir = join(SF_OUTPUT_DIR, jobId);
 
-  // Create output directory
+  // Clean and create output directory
+  try {
+    await rm(outputDir, { recursive: true, force: true });
+  } catch (e) {
+    // Ignore if doesn't exist
+  }
   await mkdir(outputDir, { recursive: true });
 
   console.log(`Starting crawl for ${domain}`);
   console.log(`Output directory: ${outputDir}`);
 
   return new Promise((resolve, reject) => {
+    // Ensure domain has protocol
+    const crawlUrl = domain.startsWith('http') ? domain : `https://${domain}`;
+
     const args = [
       '--headless',
-      '--crawl', domain,
+      '--crawl', crawlUrl,
       '--output-folder', outputDir,
       '--export-tabs', 'Internal:All',
-      '--max-crawl-depth', '3',
-      '--ignore-robots-txt',
-      '--crawl-limit', String(maxUrls),
     ];
 
     console.log(`Running: ${SF_PATH} ${args.join(' ')}`);
@@ -156,11 +161,18 @@ async function parseCSVOutput(outputDir) {
 async function parseCSVFile(csvPath) {
   console.log(`Parsing CSV: ${csvPath}`);
 
-  const content = await readFile(csvPath, 'utf-8');
+  let content = await readFile(csvPath, 'utf-8');
+
+  // Remove BOM if present
+  if (content.charCodeAt(0) === 0xFEFF) {
+    content = content.slice(1);
+  }
+
   const records = parse(content, {
     columns: true,
     skip_empty_lines: true,
     relaxColumnCount: true,
+    bom: true,
   });
 
   const urls = [];
