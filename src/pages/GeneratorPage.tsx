@@ -160,32 +160,49 @@ export function GeneratorPage() {
       console.log('Poll session check:', session ? `User: ${session.user.id}` : 'NO SESSION');
     });
 
+    // Cache session to avoid repeated getSession calls
+    let cachedSession = session;
+
     const pollInterval = setInterval(async () => {
       try {
-        console.log('Poll tick - querying jobs with IDs:', jobIds);
+        console.log('Poll tick - starting fetch...');
 
-        // Get current session for auth header
-        const { data: { session: currentSession } } = await supabase.auth.getSession();
-        if (!currentSession) {
+        // Use cached session or get fresh one
+        if (!cachedSession) {
+          const { data: { session: freshSession } } = await supabase.auth.getSession();
+          cachedSession = freshSession;
+        }
+
+        if (!cachedSession) {
           console.error('No session available for polling');
           return;
         }
 
-        // Use direct fetch to avoid Supabase client issues
+        // Use direct fetch with timeout
         const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
         const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-        const idsParam = `(${jobIds.join(',')})`;
 
-        const response = await fetch(
-          `${supabaseUrl}/rest/v1/screenshot_jobs?id=in.${idsParam}&select=id,url,status,screenshot_url,error_message`,
-          {
-            headers: {
-              'apikey': supabaseKey,
-              'Authorization': `Bearer ${currentSession.access_token}`,
-            },
-          }
-        );
+        // Format IDs for PostgREST - quote each UUID
+        const idsFormatted = jobIds.map(id => `"${id}"`).join(',');
+        const url = `${supabaseUrl}/rest/v1/screenshot_jobs?id=in.(${idsFormatted})&select=id,url,status,screenshot_url,error_message`;
 
+        console.log('Fetching URL:', url.substring(0, 100) + '...');
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+        const response = await fetch(url, {
+          headers: {
+            'apikey': supabaseKey,
+            'Authorization': `Bearer ${cachedSession.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        console.log('Fetch response status:', response.status);
         const data = await response.json();
         const error = response.ok ? null : { message: data.message || 'Query failed' };
 
@@ -217,9 +234,13 @@ export function GeneratorPage() {
           clearInterval(pollInterval);
         }
       } catch (err) {
-        console.error('Screenshot poll exception:', err);
+        if (err instanceof Error && err.name === 'AbortError') {
+          console.error('Screenshot poll timeout - fetch took too long');
+        } else {
+          console.error('Screenshot poll exception:', err);
+        }
       }
-    }, 2000); // Poll every 2 seconds
+    }, 3000); // Poll every 3 seconds
 
     // Stop after 10 minutes
     setTimeout(() => clearInterval(pollInterval), 10 * 60 * 1000);
