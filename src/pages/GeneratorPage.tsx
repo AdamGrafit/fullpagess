@@ -150,23 +150,28 @@ export function GeneratorPage() {
         console.log('Crawl response status:', crawlResponse.status);
 
         const crawlData = await crawlResponse.json();
+        console.log('Crawl data:', crawlData);
 
         if (!crawlResponse.ok) {
           throw new Error(crawlData.error || 'Failed to start crawl');
         }
 
+        // API returns crawlJobId, not jobId
+        const crawlJobId = crawlData.crawlJobId;
+        console.log('Subscribing to crawl job:', crawlJobId);
+
         // Subscribe to crawl job updates via Supabase Realtime
-        setDiscoveryMessage(`Crawl started. Job ID: ${crawlData.jobId}. Waiting for results...`);
+        setDiscoveryMessage(`Crawl started. Job ID: ${crawlJobId}. Waiting for results...`);
 
         const channel = supabase
-          .channel(`crawl-${crawlData.jobId}`)
+          .channel(`crawl-${crawlJobId}`)
           .on(
             'postgres_changes',
             {
               event: 'UPDATE',
               schema: 'public',
               table: 'crawl_jobs',
-              filter: `id=eq.${crawlData.jobId}`,
+              filter: `id=eq.${crawlJobId}`,
             },
             (payload) => {
               const job = payload.new as { status: string; discovered_urls: string[] | null; error_message: string | null };
