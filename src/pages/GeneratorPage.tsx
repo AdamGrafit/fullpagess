@@ -162,21 +162,45 @@ export function GeneratorPage() {
 
     const pollInterval = setInterval(async () => {
       try {
-        console.log('Poll tick - querying jobs...');
-        const { data, error } = await supabase
-          .from('screenshot_jobs')
-          .select('*')
-          .in('id', jobIds);
+        console.log('Poll tick - querying jobs with IDs:', jobIds);
 
-        console.log('Poll raw response:', { data, error, dataLength: data?.length });
+        // Get current session for auth header
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        if (!currentSession) {
+          console.error('No session available for polling');
+          return;
+        }
+
+        // Use direct fetch to avoid Supabase client issues
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+        const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+        const idsParam = `(${jobIds.join(',')})`;
+
+        const response = await fetch(
+          `${supabaseUrl}/rest/v1/screenshot_jobs?id=in.${idsParam}&select=id,url,status,screenshot_url,error_message`,
+          {
+            headers: {
+              'apikey': supabaseKey,
+              'Authorization': `Bearer ${currentSession.access_token}`,
+            },
+          }
+        );
+
+        const data = await response.json();
+        const error = response.ok ? null : { message: data.message || 'Query failed' };
+
+        console.log('Poll raw response:', { data, error, dataLength: Array.isArray(data) ? data.length : 0 });
 
         if (error) {
           console.error('Screenshot poll error:', error);
           return;
         }
 
-        const jobs = (data || []) as ScreenshotJob[];
+        const jobs = (Array.isArray(data) ? data : []) as ScreenshotJob[];
         console.log('Screenshot poll result:', jobs.length, 'jobs');
+        if (jobs.length > 0) {
+          console.log('First job status:', jobs[0].status, jobs[0].screenshot_url ? 'has URL' : 'no URL');
+        }
         setScreenshotJobs(jobs);
 
         // Count completed/failed
