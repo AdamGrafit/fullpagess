@@ -15,6 +15,14 @@ interface DiscoveredUrl {
   selected: boolean;
 }
 
+interface UrlGroup {
+  prefix: string;
+  label: string;
+  urls: string[];
+  count: number;
+  expanded: boolean;
+}
+
 interface CrawlJob {
   status: string;
   discovered_urls: string[] | null;
@@ -38,14 +46,11 @@ export function GeneratorPage() {
   const [discoveryStatus, setDiscoveryStatus] = useState<DiscoveryStatus>('idle');
   const [discoveryMessage, setDiscoveryMessage] = useState('');
   const [urls, setUrls] = useState<DiscoveredUrl[]>([]);
+  const [urlGroups, setUrlGroups] = useState<UrlGroup[]>([]);
   const [searchFilter, setSearchFilter] = useState('');
 
   // Session state
   const [session, setSession] = useState<Session | null>(null);
-
-  // Crawl options (for Screaming Frog)
-  const [maxUrls, setMaxUrls] = useState('500');
-  const [crawlDepth, setCrawlDepth] = useState('3');
 
   // Screenshot options
   const [fullPage, setFullPage] = useState(true);
@@ -111,6 +116,44 @@ export function GeneratorPage() {
     return cleaned;
   };
 
+  // Generate URL groups from flat list (used for crawl results)
+  const generateUrlGroups = (urlList: string[]): UrlGroup[] => {
+    const groups: Map<string, string[]> = new Map();
+
+    for (const url of urlList) {
+      try {
+        const urlObj = new URL(url);
+        const pathParts = urlObj.pathname.split('/').filter(Boolean);
+        let prefix = '/';
+        if (pathParts.length > 0) {
+          prefix = '/' + pathParts[0];
+        }
+        if (!groups.has(prefix)) {
+          groups.set(prefix, []);
+        }
+        groups.get(prefix)!.push(url);
+      } catch {
+        if (!groups.has('/')) {
+          groups.set('/', []);
+        }
+        groups.get('/')!.push(url);
+      }
+    }
+
+    const result: UrlGroup[] = [];
+    for (const [prefix, groupUrls] of groups) {
+      const label = prefix === '/' ? 'Homepage' : prefix.slice(1).charAt(0).toUpperCase() + prefix.slice(2).replace(/-/g, ' ');
+      result.push({
+        prefix,
+        label,
+        urls: groupUrls,
+        count: groupUrls.length,
+        expanded: groupUrls.length <= 10,
+      });
+    }
+    return result.sort((a, b) => b.count - a.count);
+  };
+
   // Fallback polling function when Realtime doesn't work
   const pollForJobStatus = async (jobId: string, channel: ReturnType<typeof supabase.channel>) => {
     console.log('Starting polling fallback for job:', jobId);
@@ -135,8 +178,13 @@ export function GeneratorPage() {
           channel.unsubscribe();
           const discoveredUrls = job.discovered_urls.map((url: string) => ({ url, selected: true }));
           setUrls(discoveredUrls);
+
+          // Generate groups for crawl results
+          const groups = generateUrlGroups(job.discovered_urls);
+          setUrlGroups(groups);
+
           setDiscoveryStatus('completed');
-          setDiscoveryMessage(`Found ${discoveredUrls.length} URLs via Screaming Frog crawl`);
+          setDiscoveryMessage(`Found ${discoveredUrls.length} URLs in ${groups.length} groups via Screaming Frog crawl`);
           setCurrentStep('selection');
         } else if (job.status === 'failed') {
           clearInterval(pollInterval);
@@ -295,6 +343,16 @@ export function GeneratorPage() {
         // Found URLs from sitemap
         const discoveredUrls = data.urls.map((url: string) => ({ url, selected: true }));
         setUrls(discoveredUrls);
+
+        // Set URL groups if provided
+        if (data.groups && data.groups.length > 0) {
+          const groups = data.groups.map((g: { prefix: string; label: string; urls: string[]; count: number }) => ({
+            ...g,
+            expanded: g.count <= 10, // Auto-expand small groups
+          }));
+          setUrlGroups(groups);
+        }
+
         setDiscoveryStatus('completed');
         setDiscoveryMessage(`${data.message} (source: ${data.source})`);
         setCurrentStep('selection');
@@ -304,7 +362,7 @@ export function GeneratorPage() {
         setDiscoveryMessage('No sitemap found. Starting Screaming Frog crawl...');
 
         // Call start-crawl API
-        console.log('Starting crawl for domain:', cleanDomain, 'maxUrls:', maxUrls, 'crawlDepth:', crawlDepth);
+        console.log('Starting crawl for domain:', cleanDomain);
         const crawlResponse = await fetch('/api/sitemap/start-crawl', {
           method: 'POST',
           headers: {
@@ -314,8 +372,6 @@ export function GeneratorPage() {
           body: JSON.stringify({
             domain: cleanDomain,
             sitemapJobId: data.jobId,
-            maxUrls: parseInt(maxUrls) || 500,
-            crawlDepth: parseInt(crawlDepth) || 3,
           }),
         });
         console.log('Crawl response status:', crawlResponse.status);
@@ -351,8 +407,13 @@ export function GeneratorPage() {
               if (job.status === 'completed' && job.discovered_urls) {
                 const discoveredUrls = job.discovered_urls.map((url: string) => ({ url, selected: true }));
                 setUrls(discoveredUrls);
+
+                // Generate groups for crawl results
+                const groups = generateUrlGroups(job.discovered_urls);
+                setUrlGroups(groups);
+
                 setDiscoveryStatus('completed');
-                setDiscoveryMessage(`Found ${discoveredUrls.length} URLs via Screaming Frog crawl`);
+                setDiscoveryMessage(`Found ${discoveredUrls.length} URLs in ${groups.length} groups via Screaming Frog crawl`);
                 setCurrentStep('selection');
                 channel.unsubscribe();
               } else if (job.status === 'failed') {
@@ -402,6 +463,34 @@ export function GeneratorPage() {
     setUrls(
       urls.map((u, i) => (i === index ? { ...u, selected: !u.selected } : u))
     );
+  };
+
+  const toggleGroupExpanded = (prefix: string) => {
+    setUrlGroups(urlGroups.map((g) =>
+      g.prefix === prefix ? { ...g, expanded: !g.expanded } : g
+    ));
+  };
+
+  const selectGroup = (prefix: string) => {
+    const group = urlGroups.find((g) => g.prefix === prefix);
+    if (!group) return;
+    setUrls(urls.map((u) =>
+      group.urls.includes(u.url) ? { ...u, selected: true } : u
+    ));
+  };
+
+  const deselectGroup = (prefix: string) => {
+    const group = urlGroups.find((g) => g.prefix === prefix);
+    if (!group) return;
+    setUrls(urls.map((u) =>
+      group.urls.includes(u.url) ? { ...u, selected: false } : u
+    ));
+  };
+
+  const getGroupSelectedCount = (prefix: string): number => {
+    const group = urlGroups.find((g) => g.prefix === prefix);
+    if (!group) return 0;
+    return urls.filter((u) => group.urls.includes(u.url) && u.selected).length;
   };
 
   const filteredUrls = urls.filter((u) =>
@@ -471,6 +560,7 @@ export function GeneratorPage() {
     setDiscoveryStatus('idle');
     setDiscoveryMessage('');
     setUrls([]);
+    setUrlGroups([]);
     setSearchFilter('');
     setGenerationProgress({ completed: 0, total: 0 });
     setScreenshotJobs([]);
@@ -561,41 +651,11 @@ export function GeneratorPage() {
                   helperText="Enter the full URL including https://"
                 />
 
-                {/* Crawl Options - collapsed by default */}
-                <details className="border border-gray-200 rounded-lg">
-                  <summary className="px-4 py-3 cursor-pointer text-sm font-medium text-gray-700 hover:bg-gray-50">
-                    Advanced Crawl Options
-                  </summary>
-                  <div className="px-4 pb-4 pt-2 border-t border-gray-100 space-y-4">
-                    <p className="text-xs text-gray-500">
-                      These settings apply when no sitemap is found and Screaming Frog crawler is used.
-                    </p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <Input
-                        label="Max URLs"
-                        type="number"
-                        min="10"
-                        max="10000"
-                        value={maxUrls}
-                        onChange={(e) => setMaxUrls(e.target.value)}
-                        helperText="Maximum number of pages to crawl (10-10,000). Higher = longer crawl time."
-                      />
-                      <Input
-                        label="Crawl Depth"
-                        type="number"
-                        min="1"
-                        max="10"
-                        value={crawlDepth}
-                        onChange={(e) => setCrawlDepth(e.target.value)}
-                        helperText="How many levels deep to follow links (1-10). Depth 1 = homepage only."
-                      />
-                    </div>
-                    <div className="text-xs text-gray-500 bg-blue-50 p-3 rounded">
-                      <strong>Tip:</strong> For large sites, start with lower values (e.g., 100 URLs, depth 2) to get quick results.
-                      You can always run another crawl with higher limits.
-                    </div>
-                  </div>
-                </details>
+                {/* Crawl info note */}
+                <div className="text-xs text-gray-500 bg-blue-50 p-3 rounded">
+                  <strong>Note:</strong> If no sitemap is found, the crawler will run for up to 15 minutes.
+                  For large sites, the first few hundred pages will be discovered quickly.
+                </div>
 
                 {discoveryStatus !== 'idle' && discoveryStatus !== 'completed' && (
                   <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
@@ -662,22 +722,92 @@ export function GeneratorPage() {
                   </Button>
                 </div>
 
-                <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
-                  {filteredUrls.map((item) => (
-                    <label
-                      key={item.url}
-                      className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={item.selected}
-                        onChange={() => toggleUrlSelection(urls.findIndex((u) => u.url === item.url))}
-                        className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
-                      />
-                      <span className="text-sm text-gray-700 truncate">{item.url}</span>
-                    </label>
-                  ))}
-                </div>
+                {/* Grouped URL display */}
+                {urlGroups.length > 0 && !searchFilter ? (
+                  <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
+                    {urlGroups.map((group) => (
+                      <div key={group.prefix} className="border-b border-gray-100 last:border-b-0">
+                        {/* Group header */}
+                        <div
+                          className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer hover:bg-gray-100"
+                          onClick={() => toggleGroupExpanded(group.prefix)}
+                        >
+                          <div className="flex items-center gap-3">
+                            <svg
+                              className={`w-4 h-4 text-gray-500 transition-transform ${group.expanded ? 'rotate-90' : ''}`}
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                            <span className="font-medium text-gray-900">{group.label}</span>
+                            <span className="text-xs text-gray-500">
+                              ({getGroupSelectedCount(group.prefix)}/{group.count})
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              className="text-xs text-primary-600 hover:underline"
+                              onClick={() => selectGroup(group.prefix)}
+                            >
+                              Select
+                            </button>
+                            <span className="text-gray-300">|</span>
+                            <button
+                              className="text-xs text-gray-500 hover:underline"
+                              onClick={() => deselectGroup(group.prefix)}
+                            >
+                              Deselect
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Group URLs */}
+                        {group.expanded && (
+                          <div className="divide-y divide-gray-50">
+                            {group.urls.map((groupUrl) => {
+                              const urlItem = urls.find((u) => u.url === groupUrl);
+                              if (!urlItem) return null;
+                              return (
+                                <label
+                                  key={groupUrl}
+                                  className="flex items-center gap-3 px-4 py-2 pl-10 hover:bg-gray-50 cursor-pointer"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={urlItem.selected}
+                                    onChange={() => toggleUrlSelection(urls.findIndex((u) => u.url === groupUrl))}
+                                    className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                                  />
+                                  <span className="text-sm text-gray-600 truncate">{groupUrl}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  /* Flat URL list (when filtering or no groups) */
+                  <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+                    {filteredUrls.map((item) => (
+                      <label
+                        key={item.url}
+                        className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={item.selected}
+                          onChange={() => toggleUrlSelection(urls.findIndex((u) => u.url === item.url))}
+                          className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                        />
+                        <span className="text-sm text-gray-700 truncate">{item.url}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
 
                 <div className="flex gap-4">
                   <Button variant="secondary" onClick={handleReset}>

@@ -6,6 +6,71 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// Sitemap locations to try
+const SITEMAP_PATHS = [
+  '/sitemap.xml',
+  '/sitemap_index.xml',
+  '/sitemaps.xml',
+  '/sitemap/',
+  '/sitemap/sitemap.xml',
+  '/wp-sitemap.xml',           // WordPress
+  '/sitemap-index.xml',
+  '/page-sitemap.xml',
+  '/post-sitemap.xml',
+];
+
+interface UrlGroup {
+  prefix: string;
+  label: string;
+  urls: string[];
+  count: number;
+}
+
+// Group URLs by their path prefix
+function groupUrls(urls: string[]): UrlGroup[] {
+  const groups: Map<string, string[]> = new Map();
+
+  for (const url of urls) {
+    try {
+      const urlObj = new URL(url);
+      const pathParts = urlObj.pathname.split('/').filter(Boolean);
+
+      // Determine group prefix (first path segment or root)
+      let prefix = '/';
+      let label = 'Homepage';
+
+      if (pathParts.length > 0) {
+        prefix = '/' + pathParts[0];
+        label = pathParts[0].charAt(0).toUpperCase() + pathParts[0].slice(1).replace(/-/g, ' ');
+      }
+
+      if (!groups.has(prefix)) {
+        groups.set(prefix, []);
+      }
+      groups.get(prefix)!.push(url);
+    } catch {
+      // Invalid URL, add to root group
+      if (!groups.has('/')) {
+        groups.set('/', []);
+      }
+      groups.get('/')!.push(url);
+    }
+  }
+
+  // Convert to array and sort by count (largest first)
+  const result: UrlGroup[] = [];
+  for (const [prefix, groupUrls] of groups) {
+    result.push({
+      prefix,
+      label: prefix === '/' ? 'Homepage' : prefix.slice(1).charAt(0).toUpperCase() + prefix.slice(2).replace(/-/g, ' '),
+      urls: groupUrls,
+      count: groupUrls.length,
+    });
+  }
+
+  return result.sort((a, b) => b.count - a.count);
+}
+
 // Parse XML sitemap content
 function parseSitemapXml(xmlContent: string): string[] {
   const urls: string[] = [];
@@ -49,6 +114,37 @@ async function trySitemapUrl(url: string): Promise<string[] | null> {
   } catch {
     return null;
   }
+}
+
+// Check if URLs look like sitemap index entries (other sitemap URLs)
+function isSitemapIndex(urls: string[]): boolean {
+  if (urls.length === 0) return false;
+  // If most URLs end with .xml, it's likely a sitemap index
+  const xmlCount = urls.filter(u => u.endsWith('.xml')).length;
+  return xmlCount > urls.length * 0.5;
+}
+
+// Expand sitemap index by fetching all sub-sitemaps
+async function expandSitemapIndex(sitemapUrls: string[]): Promise<string[]> {
+  const allUrls: string[] = [];
+  for (const sitemapUrl of sitemapUrls.slice(0, 15)) { // Limit to first 15 sitemaps
+    const subUrls = await trySitemapUrl(sitemapUrl);
+    if (subUrls && subUrls.length > 0) {
+      // Check if this is also an index (nested)
+      if (isSitemapIndex(subUrls)) {
+        // One level of nesting only
+        for (const nestedUrl of subUrls.slice(0, 5)) {
+          const nestedSubUrls = await trySitemapUrl(nestedUrl);
+          if (nestedSubUrls) {
+            allUrls.push(...nestedSubUrls);
+          }
+        }
+      } else {
+        allUrls.push(...subUrls);
+      }
+    }
+  }
+  return [...new Set(allUrls)]; // Remove duplicates
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -96,61 +192,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (jobError) throw jobError;
 
-    // Try sitemap.xml
-    let urls = await trySitemapUrl(`${baseUrl}/sitemap.xml`);
-    if (urls && urls.length > 0) {
-      await supabase
-        .from('sitemap_jobs')
-        .update({
-          status: 'completed',
-          urls,
-          source: 'sitemap_xml',
-          completed_at: new Date().toISOString(),
-        })
-        .eq('id', job.id);
+    // First try robots.txt for sitemap references
+    let foundUrls: string[] = [];
+    let source: string | null = null;
 
-      return res.json({
-        success: true,
-        jobId: job.id,
-        urls,
-        source: 'sitemap_xml',
-        message: `Found ${urls.length} URLs in sitemap.xml`,
-      });
-    }
-
-    // Try sitemap_index.xml
-    urls = await trySitemapUrl(`${baseUrl}/sitemap_index.xml`);
-    if (urls && urls.length > 0) {
-      const allUrls: string[] = [];
-      for (const sitemapUrl of urls.slice(0, 10)) { // Limit to first 10 sitemaps
-        const subUrls = await trySitemapUrl(sitemapUrl);
-        if (subUrls) {
-          allUrls.push(...subUrls);
-        } else {
-          allUrls.push(sitemapUrl);
-        }
-      }
-
-      await supabase
-        .from('sitemap_jobs')
-        .update({
-          status: 'completed',
-          urls: allUrls,
-          source: 'sitemap_index',
-          completed_at: new Date().toISOString(),
-        })
-        .eq('id', job.id);
-
-      return res.json({
-        success: true,
-        jobId: job.id,
-        urls: allUrls,
-        source: 'sitemap_index',
-        message: `Found ${allUrls.length} URLs in sitemap_index.xml`,
-      });
-    }
-
-    // Try robots.txt
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 5000);
@@ -166,37 +211,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const sitemapUrls = parseSitemapFromRobotsTxt(robotsTxt);
 
         if (sitemapUrls.length > 0) {
-          const allUrls: string[] = [];
-          for (const sitemapUrl of sitemapUrls.slice(0, 10)) {
-            const subUrls = await trySitemapUrl(sitemapUrl);
-            if (subUrls) {
-              allUrls.push(...subUrls);
-            }
-          }
-
-          if (allUrls.length > 0) {
-            await supabase
-              .from('sitemap_jobs')
-              .update({
-                status: 'completed',
-                urls: allUrls,
-                source: 'robots_txt',
-                completed_at: new Date().toISOString(),
-              })
-              .eq('id', job.id);
-
-            return res.json({
-              success: true,
-              jobId: job.id,
-              urls: allUrls,
-              source: 'robots_txt',
-              message: `Found ${allUrls.length} URLs from robots.txt`,
-            });
+          foundUrls = await expandSitemapIndex(sitemapUrls);
+          if (foundUrls.length > 0) {
+            source = 'robots_txt';
           }
         }
       }
     } catch {
-      // Continue
+      // Continue to other methods
+    }
+
+    // If robots.txt didn't work, try sitemap paths
+    if (foundUrls.length === 0) {
+      for (const path of SITEMAP_PATHS) {
+        const sitemapUrl = `${baseUrl}${path}`;
+        const urls = await trySitemapUrl(sitemapUrl);
+
+        if (urls && urls.length > 0) {
+          // Check if it's a sitemap index
+          if (isSitemapIndex(urls)) {
+            foundUrls = await expandSitemapIndex(urls);
+          } else {
+            foundUrls = urls;
+          }
+
+          if (foundUrls.length > 0) {
+            source = path.replace(/^\//, '').replace(/\//g, '_') || 'sitemap';
+            break;
+          }
+        }
+      }
+    }
+
+    // Return results
+    if (foundUrls.length > 0) {
+      const groups = groupUrls(foundUrls);
+
+      await supabase
+        .from('sitemap_jobs')
+        .update({
+          status: 'completed',
+          urls: foundUrls,
+          source,
+          completed_at: new Date().toISOString(),
+        })
+        .eq('id', job.id);
+
+      return res.json({
+        success: true,
+        jobId: job.id,
+        urls: foundUrls,
+        groups,
+        source,
+        message: `Found ${foundUrls.length} URLs in ${groups.length} groups`,
+      });
     }
 
     // No sitemap found
@@ -213,6 +281,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       success: false,
       jobId: job.id,
       urls: [],
+      groups: [],
       source: null,
       message: 'No sitemap found. You can start a Screaming Frog crawl.',
       requiresCrawl: true,

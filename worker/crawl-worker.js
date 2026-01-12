@@ -18,7 +18,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { spawn } from 'child_process';
-import { readFile, mkdir, rm } from 'fs/promises';
+import { readFile, mkdir, rm, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { parse } from 'csv-parse/sync';
 import { join } from 'path';
@@ -29,6 +29,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const SF_OUTPUT_DIR = process.env.SF_OUTPUT_DIR || '/tmp/screenshotpro/crawls';
 const SF_PATH = process.env.SF_PATH || '/usr/bin/screamingfrogseospider';
+const SF_CONFIG_DIR = process.env.SF_CONFIG_DIR || '/var/screenshotpro/configs';
 const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL || '10000', 10);
 const MAX_CRAWL_TIME = parseInt(process.env.MAX_CRAWL_TIME || '900000', 10); // 15 minutes
 
@@ -40,12 +41,14 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
 console.log('='.repeat(50));
-console.log('ScreenshotPro Crawl Worker');
+console.log('ScreenshotPro Crawl Worker (Screaming Frog)');
 console.log('='.repeat(50));
 console.log(`Supabase URL: ${SUPABASE_URL}`);
 console.log(`Output Directory: ${SF_OUTPUT_DIR}`);
+console.log(`Config Directory: ${SF_CONFIG_DIR}`);
 console.log(`Screaming Frog Path: ${SF_PATH}`);
 console.log(`Poll Interval: ${POLL_INTERVAL}ms`);
+console.log(`Max Crawl Time: ${MAX_CRAWL_TIME}ms`);
 console.log('='.repeat(50));
 
 /**
@@ -57,14 +60,14 @@ function checkScreamingFrog() {
     console.error('Please install Screaming Frog SEO Spider');
     return false;
   }
-  console.log('Screaming Frog found');
+  console.log('✅ Screaming Frog found');
   return true;
 }
 
 /**
  * Run Screaming Frog crawl
  */
-async function runCrawl(domain, jobId, maxUrls = 500, crawlDepth = 3) {
+async function runCrawl(domain, jobId) {
   const outputDir = join(SF_OUTPUT_DIR, jobId);
 
   // Clean and create output directory
@@ -76,43 +79,50 @@ async function runCrawl(domain, jobId, maxUrls = 500, crawlDepth = 3) {
   await mkdir(outputDir, { recursive: true });
 
   console.log(`Starting crawl for ${domain}`);
-  console.log(`Max URLs: ${maxUrls}, Crawl depth: ${crawlDepth}`);
   console.log(`Output directory: ${outputDir}`);
+
+  // Check for base config file
+  const baseConfigPath = join(SF_CONFIG_DIR, 'base.seospiderconfig');
+  const hasConfig = existsSync(baseConfigPath);
 
   return new Promise((resolve, reject) => {
     // Ensure domain has protocol
     const crawlUrl = domain.startsWith('http') ? domain : `https://${domain}`;
 
+    // Build command arguments
     const args = [
       '--headless',
       '--crawl', crawlUrl,
       '--output-folder', outputDir,
-      '--crawl-limit', String(maxUrls),
-      '--max-crawl-depth', String(crawlDepth),
       '--export-tabs', 'Internal:All',
     ];
 
+    // Add config file if available
+    if (hasConfig) {
+      args.push('--config', baseConfigPath);
+      console.log(`Using config file: ${baseConfigPath}`);
+    }
+
     console.log(`Running: ${SF_PATH} ${args.join(' ')}`);
 
-    const process = spawn(SF_PATH, args, {
+    const sfProcess = spawn(SF_PATH, args, {
       stdio: 'pipe',
-      timeout: MAX_CRAWL_TIME,
     });
 
     let stdout = '';
     let stderr = '';
 
-    process.stdout.on('data', (data) => {
+    sfProcess.stdout.on('data', (data) => {
       stdout += data.toString();
       console.log(`SF: ${data.toString().trim()}`);
     });
 
-    process.stderr.on('data', (data) => {
+    sfProcess.stderr.on('data', (data) => {
       stderr += data.toString();
       console.error(`SF Error: ${data.toString().trim()}`);
     });
 
-    process.on('close', (code) => {
+    sfProcess.on('close', (code) => {
       if (code === 0) {
         resolve({ outputDir, stdout, stderr });
       } else {
@@ -120,15 +130,24 @@ async function runCrawl(domain, jobId, maxUrls = 500, crawlDepth = 3) {
       }
     });
 
-    process.on('error', (err) => {
+    sfProcess.on('error', (err) => {
       reject(err);
     });
 
     // Timeout handler
-    setTimeout(() => {
-      process.kill();
-      reject(new Error('Crawl timed out'));
+    const timeout = setTimeout(() => {
+      sfProcess.kill('SIGTERM');
+      setTimeout(() => {
+        if (!sfProcess.killed) {
+          sfProcess.kill('SIGKILL');
+        }
+      }, 5000);
+      reject(new Error(`Crawl timed out after ${MAX_CRAWL_TIME}ms`));
     }, MAX_CRAWL_TIME);
+
+    sfProcess.on('close', () => {
+      clearTimeout(timeout);
+    });
   });
 }
 
@@ -218,7 +237,7 @@ async function processCrawlJob(job) {
       .eq('id', job.id);
 
     // Run the crawl
-    const { outputDir } = await runCrawl(job.domain, job.id, job.max_urls || 500, job.crawl_depth || 3);
+    const { outputDir } = await runCrawl(job.domain, job.id);
 
     // Parse the results
     const urls = await parseCSVOutput(outputDir);
@@ -317,11 +336,13 @@ async function pollForJobs() {
 async function main() {
   // Check Screaming Frog installation
   if (!checkScreamingFrog()) {
-    console.log('Running in test mode (Screaming Frog not installed)');
+    console.error('Cannot start worker without Screaming Frog');
+    process.exit(1);
   }
 
-  // Ensure output directory exists
+  // Ensure directories exist
   await mkdir(SF_OUTPUT_DIR, { recursive: true });
+  await mkdir(SF_CONFIG_DIR, { recursive: true });
 
   console.log('\nWorker started. Polling for jobs...\n');
 
