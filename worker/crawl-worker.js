@@ -30,7 +30,7 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const SF_OUTPUT_DIR = process.env.SF_OUTPUT_DIR || '/tmp/screenshotpro/crawls';
 const SF_PATH = process.env.SF_PATH || '/usr/bin/screamingfrogseospider';
 const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL || '10000', 10);
-const MAX_CRAWL_TIME = parseInt(process.env.MAX_CRAWL_TIME || '300000', 10); // 5 minutes
+const MAX_CRAWL_TIME = parseInt(process.env.MAX_CRAWL_TIME || '900000', 10); // 15 minutes
 
 if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
   console.error('Missing required environment variables: SUPABASE_URL, SUPABASE_SERVICE_KEY');
@@ -64,7 +64,7 @@ function checkScreamingFrog() {
 /**
  * Run Screaming Frog crawl
  */
-async function runCrawl(domain, jobId, maxUrls = 500) {
+async function runCrawl(domain, jobId, maxUrls = 500, crawlDepth = 3) {
   const outputDir = join(SF_OUTPUT_DIR, jobId);
 
   // Clean and create output directory
@@ -76,6 +76,7 @@ async function runCrawl(domain, jobId, maxUrls = 500) {
   await mkdir(outputDir, { recursive: true });
 
   console.log(`Starting crawl for ${domain}`);
+  console.log(`Max URLs: ${maxUrls}, Crawl depth: ${crawlDepth}`);
   console.log(`Output directory: ${outputDir}`);
 
   return new Promise((resolve, reject) => {
@@ -87,6 +88,8 @@ async function runCrawl(domain, jobId, maxUrls = 500) {
       '--crawl', crawlUrl,
       '--output-folder', outputDir,
       '--export-tabs', 'Internal:All',
+      '--crawl-limit', String(maxUrls),
+      '--max-crawl-depth', String(crawlDepth),
     ];
 
     console.log(`Running: ${SF_PATH} ${args.join(' ')}`);
@@ -215,7 +218,7 @@ async function processCrawlJob(job) {
       .eq('id', job.id);
 
     // Run the crawl
-    const { outputDir } = await runCrawl(job.domain, job.id, job.max_urls);
+    const { outputDir } = await runCrawl(job.domain, job.id, job.max_urls || 500, job.crawl_depth || 3);
 
     // Parse the results
     const urls = await parseCSVOutput(outputDir);

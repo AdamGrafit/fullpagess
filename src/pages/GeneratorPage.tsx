@@ -43,6 +43,10 @@ export function GeneratorPage() {
   // Session state
   const [session, setSession] = useState<Session | null>(null);
 
+  // Crawl options (for Screaming Frog)
+  const [maxUrls, setMaxUrls] = useState('500');
+  const [crawlDepth, setCrawlDepth] = useState('3');
+
   // Screenshot options
   const [fullPage, setFullPage] = useState(true);
   const [scrollPage, setScrollPage] = useState(false);
@@ -300,7 +304,7 @@ export function GeneratorPage() {
         setDiscoveryMessage('No sitemap found. Starting Screaming Frog crawl...');
 
         // Call start-crawl API
-        console.log('Starting crawl for domain:', cleanDomain);
+        console.log('Starting crawl for domain:', cleanDomain, 'maxUrls:', maxUrls, 'crawlDepth:', crawlDepth);
         const crawlResponse = await fetch('/api/sitemap/start-crawl', {
           method: 'POST',
           headers: {
@@ -310,6 +314,8 @@ export function GeneratorPage() {
           body: JSON.stringify({
             domain: cleanDomain,
             sitemapJobId: data.jobId,
+            maxUrls: parseInt(maxUrls) || 500,
+            crawlDepth: parseInt(crawlDepth) || 3,
           }),
         });
         console.log('Crawl response status:', crawlResponse.status);
@@ -554,6 +560,42 @@ export function GeneratorPage() {
                   placeholder="https://example.com"
                   helperText="Enter the full URL including https://"
                 />
+
+                {/* Crawl Options - collapsed by default */}
+                <details className="border border-gray-200 rounded-lg">
+                  <summary className="px-4 py-3 cursor-pointer text-sm font-medium text-gray-700 hover:bg-gray-50">
+                    Advanced Crawl Options
+                  </summary>
+                  <div className="px-4 pb-4 pt-2 border-t border-gray-100 space-y-4">
+                    <p className="text-xs text-gray-500">
+                      These settings apply when no sitemap is found and Screaming Frog crawler is used.
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <Input
+                        label="Max URLs"
+                        type="number"
+                        min="10"
+                        max="10000"
+                        value={maxUrls}
+                        onChange={(e) => setMaxUrls(e.target.value)}
+                        helperText="Maximum number of pages to crawl (10-10,000). Higher = longer crawl time."
+                      />
+                      <Input
+                        label="Crawl Depth"
+                        type="number"
+                        min="1"
+                        max="10"
+                        value={crawlDepth}
+                        onChange={(e) => setCrawlDepth(e.target.value)}
+                        helperText="How many levels deep to follow links (1-10). Depth 1 = homepage only."
+                      />
+                    </div>
+                    <div className="text-xs text-gray-500 bg-blue-50 p-3 rounded">
+                      <strong>Tip:</strong> For large sites, start with lower values (e.g., 100 URLs, depth 2) to get quick results.
+                      You can always run another crawl with higher limits.
+                    </div>
+                  </div>
+                </details>
 
                 {discoveryStatus !== 'idle' && discoveryStatus !== 'completed' && (
                   <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
