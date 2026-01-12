@@ -130,6 +130,8 @@ export const useAuthStore = create<AuthState>()(
           if (error) throw error;
           set({ profile: data });
         } catch (error) {
+          // Ignore AbortError (happens during React StrictMode double-render)
+          if ((error as Error).name === 'AbortError') return;
           console.error('Error fetching profile:', error);
         }
       },
