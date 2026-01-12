@@ -81,6 +81,49 @@ export function GeneratorPage() {
     return cleaned;
   };
 
+  // Fallback polling function when Realtime doesn't work
+  const pollForJobStatus = async (jobId: string, channel: ReturnType<typeof supabase.channel>) => {
+    console.log('Starting polling fallback for job:', jobId);
+    const pollInterval = setInterval(async () => {
+      try {
+        const { data: job, error } = await supabase
+          .from('crawl_jobs')
+          .select('status, discovered_urls, error_message')
+          .eq('id', jobId)
+          .single();
+
+        if (error) {
+          console.error('Poll error:', error);
+          return;
+        }
+
+        console.log('Poll result:', job);
+
+        if (job.status === 'completed' && job.discovered_urls) {
+          clearInterval(pollInterval);
+          channel.unsubscribe();
+          const discoveredUrls = (job.discovered_urls as string[]).map((url: string) => ({ url, selected: true }));
+          setUrls(discoveredUrls);
+          setDiscoveryStatus('completed');
+          setDiscoveryMessage(`Found ${discoveredUrls.length} URLs via Screaming Frog crawl`);
+          setCurrentStep('selection');
+        } else if (job.status === 'failed') {
+          clearInterval(pollInterval);
+          channel.unsubscribe();
+          setDiscoveryStatus('error');
+          setDiscoveryMessage(job.error_message || 'Crawl failed');
+        } else if (job.status === 'processing') {
+          setDiscoveryMessage('Crawl in progress...');
+        }
+      } catch (err) {
+        console.error('Poll exception:', err);
+      }
+    }, 3000); // Poll every 3 seconds
+
+    // Stop polling after 5 minutes
+    setTimeout(() => clearInterval(pollInterval), 5 * 60 * 1000);
+  };
+
   const handleDiscoverSitemap = async () => {
     console.log('handleDiscoverSitemap called, domain:', domain);
     if (!domain) return;
@@ -174,6 +217,7 @@ export function GeneratorPage() {
               filter: `id=eq.${crawlJobId}`,
             },
             (payload) => {
+              console.log('Realtime payload received:', payload);
               const job = payload.new as { status: string; discovered_urls: string[] | null; error_message: string | null };
 
               if (job.status === 'completed' && job.discovered_urls) {
@@ -192,7 +236,12 @@ export function GeneratorPage() {
               }
             }
           )
-          .subscribe();
+          .subscribe((status) => {
+            console.log('Realtime subscription status:', status);
+          });
+
+        // Start polling immediately as primary method (Realtime is unreliable with RLS)
+        pollForJobStatus(crawlJobId, channel);
 
         // Timeout after 5 minutes
         setTimeout(() => {
