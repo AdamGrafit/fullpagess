@@ -47,8 +47,12 @@ export function GeneratorPage() {
   const [fullPage, setFullPage] = useState(true);
   const [scrollPage, setScrollPage] = useState(false);
   const [refreshCache, setRefreshCache] = useState(false);
+  const [noAds, setNoAds] = useState(false);
+  const [noCookies, setNoCookies] = useState(false);
   const [viewport, setViewport] = useState('desktop');
   const [delay, setDelay] = useState('2');
+  const [format, setFormat] = useState('png');
+  const [quality, setQuality] = useState('90');
 
   // Generation progress
   const [generationProgress, setGenerationProgress] = useState({ completed: 0, total: 0 });
@@ -77,6 +81,11 @@ export function GeneratorPage() {
     { value: 'desktop', label: 'Desktop (1920x1080)' },
     { value: 'tablet', label: 'Tablet (768x1024)' },
     { value: 'mobile', label: 'Mobile (375x667)' },
+  ];
+
+  const formatOptions = [
+    { value: 'png', label: 'PNG (best quality)' },
+    { value: 'jpeg', label: 'JPEG (smaller file)' },
   ];
 
   // Normalize domain - extract clean domain from any URL format
@@ -363,8 +372,14 @@ export function GeneratorPage() {
           urls: selectedUrls.map(u => u.url),
           options: {
             fullPage,
+            scrollPage,
+            fresh: refreshCache,
+            noAds,
+            noCookies,
             deviceType: viewport,
             delay: parseInt(delay),
+            format,
+            quality: parseInt(quality),
           },
         }),
       });
@@ -608,43 +623,87 @@ export function GeneratorPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <Toggle
-                    checked={fullPage}
-                    onChange={setFullPage}
-                    label="Full Page"
-                    description="Capture the entire page, including content below the fold"
-                  />
-                  <Toggle
-                    checked={scrollPage}
-                    onChange={setScrollPage}
-                    label="Scroll Page"
-                    description="Scroll page before capture to load lazy-loaded content"
-                  />
-                  <Toggle
-                    checked={refreshCache}
-                    onChange={setRefreshCache}
-                    label="Refresh Cache"
-                    description="Bypass browser cache for fresh content"
-                  />
+                {/* Page Capture Options */}
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700 mb-3">Page Capture</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Toggle
+                      checked={fullPage}
+                      onChange={setFullPage}
+                      label="Full Page"
+                      description="Capture the entire page, including content below the fold"
+                    />
+                    <Toggle
+                      checked={scrollPage}
+                      onChange={setScrollPage}
+                      label="Scroll Page"
+                      description="Scroll page before capture to load lazy-loaded content"
+                    />
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <Select
-                    label="Viewport Size"
-                    options={viewportOptions}
-                    value={viewport}
-                    onChange={setViewport}
-                  />
-                  <Input
-                    label="Delay (seconds)"
-                    type="number"
-                    min="0"
-                    max="10"
-                    value={delay}
-                    onChange={(e) => setDelay(e.target.value)}
-                    helperText="Wait time before taking screenshot (0-10)"
-                  />
+                {/* Privacy & Performance Options */}
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700 mb-3">Privacy & Performance</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <Toggle
+                      checked={refreshCache}
+                      onChange={setRefreshCache}
+                      label="Fresh Load"
+                      description="Bypass browser cache for fresh content"
+                    />
+                    <Toggle
+                      checked={noAds}
+                      onChange={setNoAds}
+                      label="Block Ads"
+                      description="Block ads, trackers, and remove cookie banners"
+                    />
+                    <Toggle
+                      checked={noCookies}
+                      onChange={setNoCookies}
+                      label="No Cookies"
+                      description="Disable cookies during page load"
+                    />
+                  </div>
+                </div>
+
+                {/* Output Settings */}
+                <div>
+                  <h4 className="text-sm font-medium text-gray-700 mb-3">Output Settings</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <Select
+                      label="Viewport Size"
+                      options={viewportOptions}
+                      value={viewport}
+                      onChange={setViewport}
+                    />
+                    <Input
+                      label="Delay (seconds)"
+                      type="number"
+                      min="0"
+                      max="10"
+                      value={delay}
+                      onChange={(e) => setDelay(e.target.value)}
+                      helperText="Wait before capture (0-10)"
+                    />
+                    <Select
+                      label="Format"
+                      options={formatOptions}
+                      value={format}
+                      onChange={setFormat}
+                    />
+                    {format === 'jpeg' && (
+                      <Input
+                        label="Quality"
+                        type="number"
+                        min="10"
+                        max="100"
+                        value={quality}
+                        onChange={(e) => setQuality(e.target.value)}
+                        helperText="JPEG quality (10-100)"
+                      />
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex gap-4 pt-4 border-t border-gray-100">

@@ -68,51 +68,197 @@ async function initBrowser() {
   return browser;
 }
 
+// Ad/tracker domains to block
+const AD_DOMAINS = [
+  'googlesyndication.com',
+  'doubleclick.net',
+  'googleadservices.com',
+  'facebook.com/tr',
+  'google-analytics.com',
+  'googletagmanager.com',
+  'hotjar.com',
+  'crazyegg.com',
+  'mouseflow.com',
+  'optimizely.com',
+  'segment.com',
+  'mixpanel.com',
+  'adnxs.com',
+  'adsrvr.org',
+  'criteo.com',
+  'outbrain.com',
+  'taboola.com',
+];
+
 async function takeScreenshot(job) {
-  const { id, url, viewport = 'desktop', full_page = true, delay = 2 } = job;
+  const { id, url, user_id, options = {} } = job;
+
+  // Extract options with defaults
+  const {
+    fullPage = true,
+    scrollPage = false,
+    fresh = false,
+    noAds = false,
+    noCookies = false,
+    deviceType = 'desktop',
+    delay = 2,
+    format = 'png',
+    quality = 90,
+  } = options;
 
   console.log(`\n📸 Taking screenshot: ${url}`);
-  console.log(`   Viewport: ${viewport}, Full page: ${full_page}, Delay: ${delay}s`);
+  console.log(`   Options: viewport=${deviceType}, fullPage=${fullPage}, scrollPage=${scrollPage}, noAds=${noAds}, noCookies=${noCookies}, fresh=${fresh}, format=${format}, delay=${delay}s`);
 
   const browser = await initBrowser();
   const page = await browser.newPage();
 
   try {
     // Set viewport
-    const viewportConfig = VIEWPORTS[viewport] || VIEWPORTS.desktop;
-    await page.setViewport(viewportConfig);
+    const viewportConfig = VIEWPORTS[deviceType] || VIEWPORTS.desktop;
+    await page.setViewport({ ...viewportConfig, deviceScaleFactor: 1 });
 
-    // Navigate to URL
-    await page.goto(url, {
-      waitUntil: 'networkidle2',
-      timeout: 30000,
-    });
+    // Set User-Agent
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-    // Wait for specified delay (for lazy-loaded content)
+    // Disable cache if fresh option is enabled
+    if (fresh) {
+      await page.setCacheEnabled(false);
+      console.log('   Cache disabled');
+    }
+
+    // Block ads and trackers if noAds option is enabled
+    if (noAds) {
+      await page.setRequestInterception(true);
+      page.on('request', (request) => {
+        const requestUrl = request.url().toLowerCase();
+        const resourceType = request.resourceType();
+
+        const shouldBlock = AD_DOMAINS.some(domain => requestUrl.includes(domain)) ||
+          (resourceType === 'image' && requestUrl.includes('ads')) ||
+          (resourceType === 'script' && requestUrl.includes('analytics'));
+
+        if (shouldBlock) {
+          request.abort();
+        } else {
+          request.continue();
+        }
+      });
+      console.log('   Ad blocking enabled');
+    }
+
+    // Set longer timeouts for complex pages
+    page.setDefaultNavigationTimeout(90000);
+    page.setDefaultTimeout(90000);
+
+    // Navigate to URL with fallback
+    console.log(`   Navigating to: ${url}`);
+    try {
+      await page.goto(url, {
+        waitUntil: 'networkidle0',
+        timeout: 60000,
+      });
+    } catch (navError) {
+      if (navError.name === 'TimeoutError') {
+        console.log('   Timeout on networkidle0, trying domcontentloaded...');
+        await page.goto(url, {
+          waitUntil: 'domcontentloaded',
+          timeout: 30000,
+        });
+      } else {
+        throw navError;
+      }
+    }
+
+    // Scroll page to load lazy content if enabled
+    if (scrollPage) {
+      console.log('   Scrolling page...');
+      await page.evaluate(async () => {
+        await new Promise((resolve) => {
+          let totalHeight = 0;
+          const distance = 100;
+          const timer = setInterval(() => {
+            const scrollHeight = document.body.scrollHeight;
+            window.scrollBy(0, distance);
+            totalHeight += distance;
+
+            if (totalHeight >= scrollHeight) {
+              clearInterval(timer);
+              resolve();
+            }
+          }, 100);
+        });
+      });
+
+      // Scroll back to top
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    // Remove cookie banners if noAds is enabled
+    if (noAds) {
+      await page.evaluate(() => {
+        const selectors = [
+          '[class*="cookie"]',
+          '[id*="cookie"]',
+          '[class*="gdpr"]',
+          '[id*="gdpr"]',
+          '[class*="consent"]',
+          '[id*="consent"]',
+          '.cookie-banner',
+          '.cookie-notice',
+          '.cookie-bar',
+          '#cookie-bar',
+          '#cookie-notice',
+          '[class*="CookieBanner"]',
+          '[class*="cookie-banner"]',
+        ];
+
+        selectors.forEach(selector => {
+          const elements = document.querySelectorAll(selector);
+          elements.forEach(el => {
+            if (el && el.textContent && el.textContent.toLowerCase().includes('cookie')) {
+              el.remove();
+            }
+          });
+        });
+      });
+      console.log('   Cookie banners removed');
+    }
+
+    // Wait for specified delay
     if (delay > 0) {
+      console.log(`   Waiting ${delay}s...`);
       await new Promise(resolve => setTimeout(resolve, delay * 1000));
     }
 
-    // Take screenshot
-    const filename = `screenshot_${id}_${Date.now()}.png`;
+    // Determine file extension and content type
+    const fileExt = format === 'jpeg' ? 'jpg' : 'png';
+    const contentType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+    const filename = `screenshot_${id}_${Date.now()}.${fileExt}`;
     const filepath = path.join(SCREENSHOT_DIR, filename);
 
-    await page.screenshot({
+    // Take screenshot
+    const screenshotOptions = {
       path: filepath,
-      fullPage: full_page,
-      type: 'png',
-    });
+      fullPage: fullPage,
+      type: format === 'jpeg' ? 'jpeg' : 'png',
+    };
 
+    // Add quality for JPEG
+    if (format === 'jpeg') {
+      screenshotOptions.quality = Math.min(100, Math.max(10, quality));
+    }
+
+    await page.screenshot(screenshotOptions);
     console.log(`   ✅ Screenshot saved: ${filename}`);
 
     // Upload to Supabase Storage
     const fileBuffer = fs.readFileSync(filepath);
-    const storagePath = `screenshots/${job.user_id}/${filename}`;
+    const storagePath = `screenshots/${user_id}/${filename}`;
 
     const { error: uploadError } = await supabase.storage
       .from('screenshots')
       .upload(storagePath, fileBuffer, {
-        contentType: 'image/png',
+        contentType: contentType,
         upsert: true,
       });
 
@@ -130,7 +276,7 @@ async function takeScreenshot(job) {
     // Clean up local file
     fs.unlinkSync(filepath);
 
-    return { success: true, url: publicUrl, storagePath };
+    return { success: true, url: publicUrl };
   } catch (error) {
     console.error(`   ❌ Error: ${error.message}`);
     return { success: false, error: error.message };
