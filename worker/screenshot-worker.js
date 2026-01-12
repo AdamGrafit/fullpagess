@@ -157,17 +157,20 @@ async function processJob(job) {
 
     if (result.success) {
       // Update job as completed
-      await supabase
+      const { error: updateError } = await supabase
         .from('screenshot_jobs')
         .update({
           status: 'completed',
           screenshot_url: result.url,
-          storage_path: result.storagePath,
           completed_at: new Date().toISOString(),
         })
         .eq('id', id);
 
-      console.log(`   ✅ Job ${id} completed`);
+      if (updateError) {
+        console.error(`   ❌ DB update failed: ${updateError.message}`);
+      } else {
+        console.log(`   ✅ Job ${id} completed`);
+      }
     } else {
       throw new Error(result.error);
     }
