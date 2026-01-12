@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 import { MainLayout } from '../components/layout/MainLayout';
 import { Card, CardHeader, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
@@ -566,21 +568,61 @@ export function GeneratorPage() {
     setScreenshotJobs([]);
   };
 
-  const handleDownloadAll = () => {
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownloadAll = async () => {
     const completedJobs = screenshotJobs.filter(j => j.status === 'completed' && j.screenshot_url);
     if (completedJobs.length === 0) return;
 
     // For single file, just download directly
     if (completedJobs.length === 1 && completedJobs[0].screenshot_url) {
-      window.open(completedJobs[0].screenshot_url, '_blank');
+      const response = await fetch(completedJobs[0].screenshot_url);
+      const blob = await response.blob();
+      const filename = getFilenameFromUrl(completedJobs[0].url, completedJobs[0].screenshot_url);
+      saveAs(blob, filename);
       return;
     }
 
-    // For multiple files, open each in new tab
-    for (const job of completedJobs) {
-      if (job.screenshot_url) {
-        window.open(job.screenshot_url, '_blank');
-      }
+    // For multiple files, create ZIP
+    setIsDownloading(true);
+    try {
+      const zip = new JSZip();
+
+      // Download all images and add to ZIP
+      await Promise.all(completedJobs.map(async (job, index) => {
+        if (!job.screenshot_url) return;
+        try {
+          const response = await fetch(job.screenshot_url);
+          const blob = await response.blob();
+          const filename = getFilenameFromUrl(job.url, job.screenshot_url, index);
+          zip.file(filename, blob);
+        } catch (err) {
+          console.error(`Failed to download ${job.url}:`, err);
+        }
+      }));
+
+      // Generate and download ZIP
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const domainName = domain ? normalizeDomain(domain) : 'screenshots';
+      saveAs(zipBlob, `${domainName}-screenshots.zip`);
+    } catch (err) {
+      console.error('Failed to create ZIP:', err);
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  // Generate filename from URL
+  const getFilenameFromUrl = (pageUrl: string, screenshotUrl: string, index?: number): string => {
+    try {
+      const urlObj = new URL(pageUrl);
+      let path = urlObj.pathname.replace(/\//g, '-').replace(/^-|-$/g, '') || 'homepage';
+      if (path.length > 50) path = path.substring(0, 50);
+      const ext = screenshotUrl.includes('.jpg') || screenshotUrl.includes('.jpeg') ? 'jpg' : 'png';
+      const prefix = index !== undefined ? `${(index + 1).toString().padStart(2, '0')}-` : '';
+      return `${prefix}${path}.${ext}`;
+    } catch {
+      return `screenshot-${index ?? 0}.png`;
     }
   };
 
@@ -1052,8 +1094,12 @@ export function GeneratorPage() {
                       <Button variant="secondary" onClick={handleReset}>
                         Generate More
                       </Button>
-                      <Button onClick={handleDownloadAll} disabled={screenshotJobs.filter(j => j.status === 'completed').length === 0}>
-                        Download All
+                      <Button
+                        onClick={handleDownloadAll}
+                        disabled={screenshotJobs.filter(j => j.status === 'completed').length === 0 || isDownloading}
+                        isLoading={isDownloading}
+                      >
+                        {isDownloading ? 'Creating ZIP...' : 'Download All (ZIP)'}
                       </Button>
                     </div>
                   </div>
