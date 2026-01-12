@@ -52,9 +52,9 @@ let browser = null;
 
 async function initBrowser() {
   if (!browser) {
+    // Use Puppeteer's bundled Chromium (don't specify executablePath)
     browser = await puppeteer.launch({
       headless: 'new',
-      executablePath: '/usr/bin/chromium-browser',
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
