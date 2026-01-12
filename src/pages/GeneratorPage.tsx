@@ -15,6 +15,20 @@ interface DiscoveredUrl {
   selected: boolean;
 }
 
+interface CrawlJob {
+  status: string;
+  discovered_urls: string[] | null;
+  error_message: string | null;
+}
+
+interface ScreenshotJob {
+  id: string;
+  url: string;
+  status: string;
+  screenshot_url: string | null;
+  error_message: string | null;
+}
+
 type Step = 'input' | 'selection' | 'options' | 'generating';
 type DiscoveryStatus = 'idle' | 'discovering' | 'crawling' | 'completed' | 'error';
 
@@ -38,6 +52,9 @@ export function GeneratorPage() {
 
   // Generation progress
   const [generationProgress, setGenerationProgress] = useState({ completed: 0, total: 0 });
+
+  // Screenshot jobs state
+  const [screenshotJobs, setScreenshotJobs] = useState<ScreenshotJob[]>([]);
 
   // Listen for auth changes
   useEffect(() => {
@@ -86,7 +103,7 @@ export function GeneratorPage() {
     console.log('Starting polling fallback for job:', jobId);
     const pollInterval = setInterval(async () => {
       try {
-        const { data: job, error } = await supabase
+        const { data, error } = await supabase
           .from('crawl_jobs')
           .select('status, discovered_urls, error_message')
           .eq('id', jobId)
@@ -97,12 +114,13 @@ export function GeneratorPage() {
           return;
         }
 
+        const job = data as CrawlJob;
         console.log('Poll result:', job);
 
         if (job.status === 'completed' && job.discovered_urls) {
           clearInterval(pollInterval);
           channel.unsubscribe();
-          const discoveredUrls = (job.discovered_urls as string[]).map((url: string) => ({ url, selected: true }));
+          const discoveredUrls = job.discovered_urls.map((url: string) => ({ url, selected: true }));
           setUrls(discoveredUrls);
           setDiscoveryStatus('completed');
           setDiscoveryMessage(`Found ${discoveredUrls.length} URLs via Screaming Frog crawl`);
@@ -122,6 +140,48 @@ export function GeneratorPage() {
 
     // Stop polling after 5 minutes
     setTimeout(() => clearInterval(pollInterval), 5 * 60 * 1000);
+  };
+
+  // Polling function for screenshot jobs
+  const pollForScreenshotJobs = (jobIds: string[]) => {
+    console.log('Starting polling for screenshot jobs:', jobIds);
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('screenshot_jobs')
+          .select('*')
+          .in('id', jobIds);
+
+        if (error) {
+          console.error('Screenshot poll error:', error);
+          return;
+        }
+
+        const jobs = (data || []) as ScreenshotJob[];
+        console.log('Screenshot poll result:', jobs);
+        setScreenshotJobs(jobs);
+
+        // Count completed/failed
+        const completed = jobs.filter(j => j.status === 'completed').length;
+        const failed = jobs.filter(j => j.status === 'failed').length;
+        const done = completed + failed;
+
+        console.log('Screenshot progress:', done, '/', jobIds.length);
+        setGenerationProgress({ completed: done, total: jobIds.length });
+
+        // All done?
+        if (done === jobIds.length) {
+          console.log('All screenshot jobs completed');
+          clearInterval(pollInterval);
+        }
+      } catch (err) {
+        console.error('Screenshot poll exception:', err);
+      }
+    }, 2000); // Poll every 2 seconds
+
+    // Stop after 10 minutes
+    setTimeout(() => clearInterval(pollInterval), 10 * 60 * 1000);
   };
 
   const handleDiscoverSitemap = async () => {
@@ -284,15 +344,50 @@ export function GeneratorPage() {
 
   const handleGenerateScreenshots = async () => {
     const selectedUrls = urls.filter((u) => u.selected);
-    if (selectedUrls.length === 0) return;
+    if (selectedUrls.length === 0 || !session) return;
 
+    console.log('Starting screenshot generation for', selectedUrls.length, 'URLs');
     setCurrentStep('generating');
     setGenerationProgress({ completed: 0, total: selectedUrls.length });
+    setScreenshotJobs([]); // Reset jobs
 
-    // Simulate screenshot generation
-    for (let i = 0; i < selectedUrls.length; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      setGenerationProgress({ completed: i + 1, total: selectedUrls.length });
+    try {
+      // Call API to create screenshot jobs
+      const response = await fetch('/api/screenshots/generate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          urls: selectedUrls.map(u => ({
+            url: u.url,
+            fullPage,
+            viewport,
+            delay: parseInt(delay),
+          })),
+        }),
+      });
+
+      console.log('Generate response status:', response.status);
+      const data = await response.json();
+      console.log('Generate response data:', data);
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create screenshot jobs');
+      }
+
+      // Store job IDs and start polling
+      const jobIds = data.jobs.map((j: { id: string }) => j.id);
+      console.log('Created screenshot jobs:', jobIds);
+
+      // Start polling for job status
+      pollForScreenshotJobs(jobIds);
+
+    } catch (error) {
+      console.error('Screenshot generation error:', error);
+      setCurrentStep('options');
+      // Could add toast notification here
     }
   };
 
@@ -304,6 +399,25 @@ export function GeneratorPage() {
     setUrls([]);
     setSearchFilter('');
     setGenerationProgress({ completed: 0, total: 0 });
+    setScreenshotJobs([]);
+  };
+
+  const handleDownloadAll = () => {
+    const completedJobs = screenshotJobs.filter(j => j.status === 'completed' && j.screenshot_url);
+    if (completedJobs.length === 0) return;
+
+    // For single file, just download directly
+    if (completedJobs.length === 1 && completedJobs[0].screenshot_url) {
+      window.open(completedJobs[0].screenshot_url, '_blank');
+      return;
+    }
+
+    // For multiple files, open each in new tab
+    for (const job of completedJobs) {
+      if (job.screenshot_url) {
+        window.open(job.screenshot_url, '_blank');
+      }
+    }
   };
 
   return (
@@ -580,34 +694,83 @@ export function GeneratorPage() {
                   }
                 />
 
-                {generationProgress.completed === generationProgress.total && (
-                  <div className="text-center py-6">
-                    <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <svg
-                        className="w-8 h-8 text-green-600"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M5 13l4 4L19 7"
-                        />
-                      </svg>
+                {generationProgress.completed === generationProgress.total && generationProgress.total > 0 && (
+                  <div className="space-y-4">
+                    <div className="text-center py-4">
+                      <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <svg
+                          className="w-8 h-8 text-green-600"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M5 13l4 4L19 7"
+                          />
+                        </svg>
+                      </div>
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2">
+                        Screenshots Generated!
+                      </h3>
+                      <p className="text-gray-600">
+                        {screenshotJobs.filter(j => j.status === 'completed').length} successful
+                        {screenshotJobs.filter(j => j.status === 'failed').length > 0 &&
+                          `, ${screenshotJobs.filter(j => j.status === 'failed').length} failed`}
+                      </p>
                     </div>
-                    <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                      Screenshots Generated!
-                    </h3>
-                    <p className="text-gray-600 mb-6">
-                      All {generationProgress.total} screenshots have been captured successfully.
-                    </p>
-                    <div className="flex justify-center gap-4">
+
+                    {/* Screenshot Grid */}
+                    {screenshotJobs.filter(j => j.status === 'completed' && j.screenshot_url).length > 0 && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {screenshotJobs.filter(j => j.status === 'completed' && j.screenshot_url).map((job) => (
+                          <div key={job.id} className="border border-gray-200 rounded-lg overflow-hidden bg-white shadow-sm">
+                            <div className="aspect-video bg-gray-100 overflow-hidden">
+                              <img
+                                src={job.screenshot_url || ''}
+                                alt={job.url}
+                                className="w-full h-full object-cover object-top"
+                              />
+                            </div>
+                            <div className="p-3">
+                              <p className="text-xs text-gray-500 truncate mb-2">{job.url}</p>
+                              <a
+                                href={job.screenshot_url || '#'}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-primary-600 hover:underline"
+                              >
+                                Open Full Size
+                              </a>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Failed jobs */}
+                    {screenshotJobs.filter(j => j.status === 'failed').length > 0 && (
+                      <div className="bg-red-50 rounded-lg p-4">
+                        <h4 className="text-sm font-medium text-red-800 mb-2">Failed Screenshots:</h4>
+                        <ul className="text-xs text-red-600 space-y-1">
+                          {screenshotJobs.filter(j => j.status === 'failed').map((job) => (
+                            <li key={job.id} className="truncate">
+                              {job.url}: {job.error_message || 'Unknown error'}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    <div className="flex justify-center gap-4 pt-4">
                       <Button variant="secondary" onClick={handleReset}>
                         Generate More
                       </Button>
-                      <Button>Download All (ZIP)</Button>
+                      <Button onClick={handleDownloadAll} disabled={screenshotJobs.filter(j => j.status === 'completed').length === 0}>
+                        Download All
+                      </Button>
                     </div>
                   </div>
                 )}
