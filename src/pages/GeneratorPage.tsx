@@ -360,12 +360,12 @@ export function GeneratorPage() {
           'Authorization': `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          urls: selectedUrls.map(u => ({
-            url: u.url,
+          urls: selectedUrls.map(u => u.url),
+          options: {
             fullPage,
-            viewport,
+            deviceType: viewport,
             delay: parseInt(delay),
-          })),
+          },
         }),
       });
 
