@@ -8,14 +8,18 @@ const supabase = createClient(
 
 interface ScreenshotOptions {
   fullPage?: boolean;
-  scroll?: boolean;
-  refreshCache?: boolean;
+  scrollPage?: boolean;
+  fresh?: boolean;
+  noAds?: boolean;
+  noCookies?: boolean;
   viewport?: {
     width: number;
     height: number;
   };
   deviceType?: 'desktop' | 'tablet' | 'mobile';
   delay?: number;
+  format?: 'png' | 'jpeg';
+  quality?: number;
 }
 
 const viewportPresets = {
@@ -74,11 +78,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       status: 'pending' as const,
       options: {
         fullPage: options.fullPage ?? true,
-        scroll: options.scroll ?? false,
-        refreshCache: options.refreshCache ?? false,
+        scrollPage: options.scrollPage ?? false,
+        fresh: options.fresh ?? false,
+        noAds: options.noAds ?? false,
+        noCookies: options.noCookies ?? false,
         viewport,
         deviceType: options.deviceType ?? 'desktop',
         delay: options.delay ?? 2,
+        format: options.format ?? 'png',
+        quality: options.quality ?? 90,
       },
     }));
 
