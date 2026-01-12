@@ -155,12 +155,20 @@ export function GeneratorPage() {
   const pollForScreenshotJobs = (jobIds: string[]) => {
     console.log('Starting polling for screenshot jobs:', jobIds);
 
+    // Check current session for debugging
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log('Poll session check:', session ? `User: ${session.user.id}` : 'NO SESSION');
+    });
+
     const pollInterval = setInterval(async () => {
       try {
+        console.log('Poll tick - querying jobs...');
         const { data, error } = await supabase
           .from('screenshot_jobs')
           .select('*')
           .in('id', jobIds);
+
+        console.log('Poll raw response:', { data, error, dataLength: data?.length });
 
         if (error) {
           console.error('Screenshot poll error:', error);
@@ -168,7 +176,7 @@ export function GeneratorPage() {
         }
 
         const jobs = (data || []) as ScreenshotJob[];
-        console.log('Screenshot poll result:', jobs);
+        console.log('Screenshot poll result:', jobs.length, 'jobs');
         setScreenshotJobs(jobs);
 
         // Count completed/failed
