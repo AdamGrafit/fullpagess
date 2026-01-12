@@ -87,9 +87,9 @@ async function runCrawl(domain, jobId, maxUrls = 500, crawlDepth = 3) {
       '--headless',
       '--crawl', crawlUrl,
       '--output-folder', outputDir,
-      '--export-tabs', 'Internal:All',
       '--crawl-limit', String(maxUrls),
       '--max-crawl-depth', String(crawlDepth),
+      '--export-tabs', 'Internal:All',
     ];
 
     console.log(`Running: ${SF_PATH} ${args.join(' ')}`);
