@@ -89,6 +89,36 @@ const AD_DOMAINS = [
   'taboola.com',
 ];
 
+// Cookie consent/GDPR domains to block
+const COOKIE_DOMAINS = [
+  'cookiebot.com',
+  'consentcdn.cookiebot.com',
+  'consent.cookiebot.com',
+  'cookiescript.com',
+  'cookielaw.org',
+  'onetrust.com',
+  'cdn.cookielaw.org',
+  'privacymanager.io',
+  'trustarc.com',
+  'consent.trustarc.com',
+  'quantcast.com',
+  'quantcast.mgr.consensu.org',
+  'didomi.io',
+  'sdk.privacy-center.org',
+  'iubenda.com',
+  'cdn.iubenda.com',
+  'termly.io',
+  'app.termly.io',
+  'usercentrics.eu',
+  'app.usercentrics.eu',
+  'evidon.com',
+  'consensu.org',
+  'cookieconsent.com',
+  'cc.cdn.civiccomputing.com',
+  'klaro.org',
+  'osano.com',
+];
+
 async function takeScreenshot(job) {
   const { id, url, user_id, options = {} } = job;
 
@@ -125,16 +155,26 @@ async function takeScreenshot(job) {
       console.log('   Cache disabled');
     }
 
-    // Block ads and trackers if noAds option is enabled
-    if (noAds) {
+    // Block ads, trackers, and cookie consent scripts
+    if (noAds || noCookies) {
       await page.setRequestInterception(true);
       page.on('request', (request) => {
         const requestUrl = request.url().toLowerCase();
         const resourceType = request.resourceType();
 
-        const shouldBlock = AD_DOMAINS.some(domain => requestUrl.includes(domain)) ||
-          (resourceType === 'image' && requestUrl.includes('ads')) ||
-          (resourceType === 'script' && requestUrl.includes('analytics'));
+        let shouldBlock = false;
+
+        // Block ad domains if noAds is enabled
+        if (noAds) {
+          shouldBlock = AD_DOMAINS.some(domain => requestUrl.includes(domain)) ||
+            (resourceType === 'image' && requestUrl.includes('ads')) ||
+            (resourceType === 'script' && requestUrl.includes('analytics'));
+        }
+
+        // Block cookie consent domains if noCookies is enabled
+        if (noCookies && !shouldBlock) {
+          shouldBlock = COOKIE_DOMAINS.some(domain => requestUrl.includes(domain));
+        }
 
         if (shouldBlock) {
           request.abort();
@@ -142,7 +182,7 @@ async function takeScreenshot(job) {
           request.continue();
         }
       });
-      console.log('   Ad blocking enabled');
+      console.log(`   Request blocking enabled (noAds=${noAds}, noCookies=${noCookies})`);
     }
 
     // Set longer timeouts for complex pages
@@ -193,16 +233,20 @@ async function takeScreenshot(job) {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
 
-    // Remove cookie banners if noAds is enabled
-    if (noAds) {
+    // Remove cookie banners if noAds or noCookies is enabled
+    if (noAds || noCookies) {
       await page.evaluate(() => {
+        // Comprehensive list of cookie banner selectors
         const selectors = [
+          // Generic cookie/consent selectors
           '[class*="cookie"]',
           '[id*="cookie"]',
           '[class*="gdpr"]',
           '[id*="gdpr"]',
           '[class*="consent"]',
           '[id*="consent"]',
+          '[class*="privacy"]',
+          '[id*="privacy"]',
           '.cookie-banner',
           '.cookie-notice',
           '.cookie-bar',
@@ -210,15 +254,99 @@ async function takeScreenshot(job) {
           '#cookie-notice',
           '[class*="CookieBanner"]',
           '[class*="cookie-banner"]',
+
+          // Cookiebot specific
+          '#CybotCookiebotDialog',
+          '#CybotCookiebotDialogBody',
+          '[class*="CybotCookiebot"]',
+          '#cookiebanner',
+          '.cookiebanner',
+
+          // OneTrust specific
+          '#onetrust-consent-sdk',
+          '#onetrust-banner-sdk',
+          '.onetrust-pc-dark-filter',
+          '[class*="onetrust"]',
+
+          // Quantcast
+          '#qc-cmp2-container',
+          '.qc-cmp2-container',
+
+          // TrustArc
+          '#truste-consent-track',
+          '.truste_overlay',
+          '.truste_box_overlay',
+
+          // Didomi
+          '#didomi-host',
+          '.didomi-popup-container',
+
+          // Iubenda
+          '.iubenda-cs-container',
+          '#iubenda-cs-banner',
+
+          // Termly
+          '[class*="termly"]',
+          '#termly-code-snippet-support',
+
+          // Usercentrics
+          '#usercentrics-root',
+          '[class*="usercentrics"]',
+
+          // Common overlay/modal patterns
+          '[aria-label*="cookie"]',
+          '[aria-label*="consent"]',
+          '[role="dialog"][class*="cookie"]',
+          '[role="dialog"][class*="consent"]',
+
+          // Klaro
+          '.klaro',
+          '.cookie-modal',
+
+          // Osano
+          '.osano-cm-window',
+          '.osano-cm-dialog',
         ];
 
+        // Remove elements matching selectors
         selectors.forEach(selector => {
-          const elements = document.querySelectorAll(selector);
-          elements.forEach(el => {
-            if (el && el.textContent && el.textContent.toLowerCase().includes('cookie')) {
+          try {
+            const elements = document.querySelectorAll(selector);
+            elements.forEach(el => {
               el.remove();
-            }
-          });
+            });
+          } catch (e) {
+            // Ignore invalid selector errors
+          }
+        });
+
+        // Also remove any fixed/sticky elements at the bottom that might be cookie banners
+        const allElements = document.querySelectorAll('*');
+        allElements.forEach(el => {
+          const style = window.getComputedStyle(el);
+          const isFixed = style.position === 'fixed' || style.position === 'sticky';
+          const isAtBottom = parseInt(style.bottom) <= 50 || el.getBoundingClientRect().bottom > window.innerHeight - 100;
+          const hasText = el.textContent && el.textContent.toLowerCase();
+          const isCookieRelated = hasText && (
+            hasText.includes('cookie') ||
+            hasText.includes('consent') ||
+            hasText.includes('privacy') ||
+            hasText.includes('gdpr') ||
+            hasText.includes('accept all') ||
+            hasText.includes('reject all')
+          );
+
+          if (isFixed && isAtBottom && isCookieRelated && el.offsetHeight < 400) {
+            el.remove();
+          }
+        });
+
+        // Remove any remaining overlay/backdrop elements
+        document.querySelectorAll('[class*="overlay"], [class*="backdrop"], [class*="modal-backdrop"]').forEach(el => {
+          const style = window.getComputedStyle(el);
+          if (style.position === 'fixed' && parseFloat(style.opacity) < 1) {
+            el.remove();
+          }
         });
       });
       console.log('   Cookie banners removed');
