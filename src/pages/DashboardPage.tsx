@@ -22,9 +22,19 @@ export function DashboardPage() {
   const [isGeneratingKey, setIsGeneratingKey] = useState(false);
   const [usageStats, setUsageStats] = useState<UsageStats>({ sitemapCount: 0, screenshotCount: 0, thisMonth: 0 });
 
+  // Update form state when profile loads
+  useEffect(() => {
+    if (profile) {
+      setFullName(profile.full_name || '');
+      setUsername(profile.username || '');
+    }
+  }, [profile]);
+
   // Fetch usage statistics
   useEffect(() => {
     async function fetchUsageStats() {
+      // Wait for auth to finish loading
+      if (isLoading) return;
       if (!profile?.id) return;
 
       try {
@@ -61,7 +71,7 @@ export function DashboardPage() {
     }
 
     fetchUsageStats();
-  }, [profile?.id]);
+  }, [profile?.id, isLoading]);
 
   const handleSaveProfile = async () => {
     try {
@@ -106,6 +116,17 @@ export function DashboardPage() {
       minute: '2-digit',
     });
   };
+
+  // Show loading state while auth is initializing
+  if (isLoading) {
+    return (
+      <MainLayout>
+        <div className="flex items-center justify-center h-64">
+          <div className="w-8 h-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" />
+        </div>
+      </MainLayout>
+    );
+  }
 
   return (
     <MainLayout>

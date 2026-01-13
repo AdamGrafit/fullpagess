@@ -42,7 +42,7 @@ interface Project {
 type TabType = 'screenshots' | 'urls';
 
 export function ProjectsPage() {
-  const { profile, session } = useAuth();
+  const { profile, session, isLoading: authLoading } = useAuth();
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [expandedProject, setExpandedProject] = useState<string | null>(null);
@@ -64,7 +64,16 @@ export function ProjectsPage() {
 
   useEffect(() => {
     async function fetchProjects() {
-      if (!profile?.id) return;
+      // Wait for auth to finish loading
+      if (authLoading) {
+        return;
+      }
+
+      // If no profile after auth is done, stop loading
+      if (!profile?.id) {
+        setIsLoading(false);
+        return;
+      }
 
       setIsLoading(true);
       try {
@@ -138,7 +147,7 @@ export function ProjectsPage() {
     }
 
     fetchProjects();
-  }, [profile?.id]);
+  }, [profile?.id, authLoading]);
 
   const extractDomain = (url: string): string => {
     try {
@@ -517,7 +526,7 @@ export function ProjectsPage() {
     );
   };
 
-  if (isLoading) {
+  if (isLoading || authLoading) {
     return (
       <MainLayout>
         <div className="flex items-center justify-center h-64">
