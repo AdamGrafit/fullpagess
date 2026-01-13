@@ -29,6 +29,8 @@ interface CrawlJob {
   status: string;
   discovered_urls: string[] | null;
   error_message: string | null;
+  crawl_progress?: number;
+  crawl_total?: number;
 }
 
 interface ScreenshotJob {
@@ -65,6 +67,10 @@ export function GeneratorPage() {
   const [format, setFormat] = useState('png');
   const [quality, setQuality] = useState('90');
 
+  // Crawl options
+  const [maxUrls, setMaxUrls] = useState('500');
+  const [crawlProgress, setCrawlProgress] = useState({ completed: 0, total: 0 });
+
   // Generation progress
   const [generationProgress, setGenerationProgress] = useState({ completed: 0, total: 0 });
 
@@ -97,6 +103,13 @@ export function GeneratorPage() {
   const formatOptions = [
     { value: 'png', label: 'PNG (best quality)' },
     { value: 'jpeg', label: 'JPEG (smaller file)' },
+  ];
+
+  const maxUrlsOptions = [
+    { value: '100', label: '100 URLs (fast)' },
+    { value: '500', label: '500 URLs (default)' },
+    { value: '1000', label: '1,000 URLs' },
+    { value: '5000', label: '5,000 URLs (slow)' },
   ];
 
   // Normalize domain - extract clean domain from any URL format
@@ -163,7 +176,7 @@ export function GeneratorPage() {
       try {
         const { data, error } = await supabase
           .from('crawl_jobs')
-          .select('status, discovered_urls, error_message')
+          .select('status, discovered_urls, error_message, crawl_progress, crawl_total')
           .eq('id', jobId)
           .single();
 
@@ -189,6 +202,7 @@ export function GeneratorPage() {
           setDiscoveryStatus('completed');
           setDiscoveryMessage(`Found ${discoveredUrls.length} URLs in ${groups.length} groups via Screaming Frog crawl`);
           setCurrentStep('selection');
+          setCrawlProgress({ completed: 0, total: 0 });
 
           // Cleanup channel safely
           try { channel.unsubscribe(); } catch { /* ignore */ }
@@ -199,11 +213,18 @@ export function GeneratorPage() {
           // Update state BEFORE cleanup (so user sees error even if cleanup fails)
           setDiscoveryStatus('error');
           setDiscoveryMessage(job.error_message || 'Crawl failed');
+          setCrawlProgress({ completed: 0, total: 0 });
 
           // Cleanup channel safely
           try { channel.unsubscribe(); } catch { /* ignore */ }
         } else if (job.status === 'processing' || job.status === 'pending') {
-          setDiscoveryMessage('Crawl in progress...');
+          // Update crawl progress if available
+          if (job.crawl_progress && job.crawl_total) {
+            setCrawlProgress({ completed: job.crawl_progress, total: job.crawl_total });
+            setDiscoveryMessage(`Crawling... ${job.crawl_progress} / ${job.crawl_total} URLs`);
+          } else {
+            setDiscoveryMessage('Crawl in progress...');
+          }
         }
       } catch (err) {
         console.error('Poll exception:', err);
@@ -378,7 +399,7 @@ export function GeneratorPage() {
         setDiscoveryMessage('No sitemap found. Starting Screaming Frog crawl...');
 
         // Call start-crawl API
-        console.log('Starting crawl for domain:', cleanDomain);
+        console.log('Starting crawl for domain:', cleanDomain, 'maxUrls:', maxUrls);
         const crawlResponse = await fetch('/api/sitemap/start-crawl', {
           method: 'POST',
           headers: {
@@ -388,6 +409,7 @@ export function GeneratorPage() {
           body: JSON.stringify({
             domain: cleanDomain,
             sitemapJobId: data.jobId,
+            maxUrls: parseInt(maxUrls),
           }),
         });
         console.log('Crawl response status:', crawlResponse.status);
@@ -707,11 +729,34 @@ export function GeneratorPage() {
                   helperText="Enter the full URL including https://"
                 />
 
+                {/* URL limit selection */}
+                <Select
+                  label="Maximum URLs (for large sites)"
+                  options={maxUrlsOptions}
+                  value={maxUrls}
+                  onChange={setMaxUrls}
+                />
+
                 {/* Crawl info note */}
                 <div className="text-xs text-gray-500 bg-blue-50 p-3 rounded">
-                  <strong>Note:</strong> If no sitemap is found, the crawler will run for up to 15 minutes.
-                  For large sites, the first few hundred pages will be discovered quickly.
+                  <strong>Note:</strong> If no sitemap is found, the crawler will discover pages automatically.
+                  Large sites may take several minutes depending on the URL limit selected.
                 </div>
+
+                {/* Crawl progress indicator */}
+                {discoveryStatus === 'crawling' && crawlProgress.total > 0 && (
+                  <div className="space-y-2">
+                    <ProgressBar
+                      value={crawlProgress.completed}
+                      max={crawlProgress.total}
+                      showLabel
+                      size="sm"
+                    />
+                    <p className="text-xs text-gray-500 text-center">
+                      Crawling: {crawlProgress.completed} / {crawlProgress.total} URLs discovered
+                    </p>
+                  </div>
+                )}
 
                 {discoveryStatus !== 'idle' && discoveryStatus !== 'completed' && (
                   <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">

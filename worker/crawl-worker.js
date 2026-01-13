@@ -85,6 +85,9 @@ async function runCrawl(domain, jobId) {
   const baseConfigPath = join(SF_CONFIG_DIR, 'base.seospiderconfig');
   const hasConfig = existsSync(baseConfigPath);
 
+  // Track last progress update to avoid too many DB writes
+  let lastProgressUpdate = 0;
+
   return new Promise((resolve, reject) => {
     // Ensure domain has protocol
     const crawlUrl = domain.startsWith('http') ? domain : `https://${domain}`;
@@ -112,9 +115,35 @@ async function runCrawl(domain, jobId) {
     let stdout = '';
     let stderr = '';
 
-    sfProcess.stdout.on('data', (data) => {
-      stdout += data.toString();
-      console.log(`SF: ${data.toString().trim()}`);
+    sfProcess.stdout.on('data', async (data) => {
+      const output = data.toString();
+      stdout += output;
+      console.log(`SF: ${output.trim()}`);
+
+      // Parse SF progress: "SpiderProgress [mActive=5, mCompleted=100, mWaiting=500"
+      const match = output.match(/mCompleted=(\d+),\s*mWaiting=(\d+)/);
+      if (match) {
+        const completed = parseInt(match[1]);
+        const waiting = parseInt(match[2]);
+        const total = completed + waiting;
+
+        // Update DB every 50 URLs to reduce writes
+        if (completed - lastProgressUpdate >= 50) {
+          lastProgressUpdate = completed;
+          try {
+            await supabase
+              .from('crawl_jobs')
+              .update({
+                crawl_progress: completed,
+                crawl_total: total
+              })
+              .eq('id', jobId);
+            console.log(`Progress update: ${completed}/${total} URLs`);
+          } catch (err) {
+            console.error('Failed to update progress:', err.message);
+          }
+        }
+      }
     });
 
     sfProcess.stderr.on('data', (data) => {
@@ -240,7 +269,14 @@ async function processCrawlJob(job) {
     const { outputDir } = await runCrawl(job.domain, job.id);
 
     // Parse the results
-    const urls = await parseCSVOutput(outputDir);
+    let urls = await parseCSVOutput(outputDir);
+
+    // Enforce max_urls limit from database
+    const maxUrls = job.max_urls || 500;
+    if (urls.length > maxUrls) {
+      console.log(`Limiting URLs from ${urls.length} to ${maxUrls}`);
+      urls = urls.slice(0, maxUrls);
+    }
 
     // Update job with results
     await supabase
