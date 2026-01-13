@@ -150,7 +150,7 @@ export function ProjectsPage() {
       case 'processing':
         return <Badge variant="warning">Processing</Badge>;
       case 'failed':
-        return <Badge variant="danger">Failed</Badge>;
+        return <Badge variant="error">Failed</Badge>;
       default:
         return <Badge variant="default">Pending</Badge>;
     }
