@@ -173,11 +173,12 @@ export function GeneratorPage() {
         }
 
         const job = data as CrawlJob;
-        console.log('Poll result:', job);
+        console.log('Poll result:', job.status, job);
 
         if (job.status === 'completed' && job.discovered_urls) {
+          // Stop polling first
           clearInterval(pollInterval);
-          channel.unsubscribe();
+
           const discoveredUrls = job.discovered_urls.map((url: string) => ({ url, selected: true }));
           setUrls(discoveredUrls);
 
@@ -188,12 +189,20 @@ export function GeneratorPage() {
           setDiscoveryStatus('completed');
           setDiscoveryMessage(`Found ${discoveredUrls.length} URLs in ${groups.length} groups via Screaming Frog crawl`);
           setCurrentStep('selection');
+
+          // Cleanup channel safely
+          try { channel.unsubscribe(); } catch { /* ignore */ }
         } else if (job.status === 'failed') {
+          // Stop polling first
           clearInterval(pollInterval);
-          channel.unsubscribe();
+
+          // Update state BEFORE cleanup (so user sees error even if cleanup fails)
           setDiscoveryStatus('error');
           setDiscoveryMessage(job.error_message || 'Crawl failed');
-        } else if (job.status === 'processing') {
+
+          // Cleanup channel safely
+          try { channel.unsubscribe(); } catch { /* ignore */ }
+        } else if (job.status === 'processing' || job.status === 'pending') {
           setDiscoveryMessage('Crawl in progress...');
         }
       } catch (err) {
@@ -201,8 +210,13 @@ export function GeneratorPage() {
       }
     }, 3000); // Poll every 3 seconds
 
-    // Stop polling after 5 minutes
-    setTimeout(() => clearInterval(pollInterval), 5 * 60 * 1000);
+    // Stop polling after 6 minutes (job timeout is 5 min)
+    setTimeout(() => {
+      clearInterval(pollInterval);
+      // If still crawling after timeout, show timeout error
+      setDiscoveryStatus('error');
+      setDiscoveryMessage('Crawl timed out. Please try again.');
+    }, 6 * 60 * 1000);
   };
 
   // Polling function for screenshot jobs
