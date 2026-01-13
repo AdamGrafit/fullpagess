@@ -10,10 +10,15 @@ interface ScreenshotRequest {
   url: string;
   options?: {
     fullPage?: boolean;
+    scrollPage?: boolean;
+    fresh?: boolean;
+    noAds?: boolean;
+    noCookies?: boolean;
     viewport?: { width: number; height: number };
+    deviceType?: 'desktop' | 'tablet' | 'mobile';
     delay?: number;
-    scroll?: boolean;
-    refreshCache?: boolean;
+    format?: 'png' | 'jpeg';
+    quality?: number;
   };
 }
 
@@ -92,7 +97,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Resolve viewport
-    const viewport = options.viewport || viewportPresets.desktop;
+    let viewport = options.viewport;
+    if (!viewport && options.deviceType) {
+      viewport = viewportPresets[options.deviceType];
+    }
+    if (!viewport) {
+      viewport = viewportPresets.desktop;
+    }
 
     // Create screenshot job
     const { data: job, error: jobError } = await supabase
@@ -103,10 +114,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         status: 'pending',
         options: {
           fullPage: options.fullPage ?? true,
-          scroll: options.scroll ?? false,
-          refreshCache: options.refreshCache ?? false,
+          scrollPage: options.scrollPage ?? false,
+          fresh: options.fresh ?? false,
+          noAds: options.noAds ?? false,
+          noCookies: options.noCookies ?? false,
           viewport,
+          deviceType: options.deviceType ?? 'desktop',
           delay: options.delay ?? 2,
+          format: options.format ?? 'png',
+          quality: options.quality ?? 90,
         },
       })
       .select()

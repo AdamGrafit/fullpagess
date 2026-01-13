@@ -6,6 +6,23 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// Track API usage - one entry per screenshot
+async function trackUsage(userId: string, endpoint: string, count: number = 1) {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    // Insert multiple rows for accurate counting
+    const rows = Array(count).fill({
+      user_id: userId,
+      endpoint,
+      date: today,
+      request_count: 1,
+    });
+    await supabase.from('api_usage').insert(rows);
+  } catch (err) {
+    console.error('Failed to track usage:', err);
+  }
+}
+
 interface ScreenshotOptions {
   fullPage?: boolean;
   scrollPage?: boolean;
@@ -96,6 +113,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .select();
 
     if (jobsError) throw jobsError;
+
+    // Track usage - one entry per screenshot
+    await trackUsage(user.id, 'screenshot', urls.length);
 
     return res.json({
       success: true,

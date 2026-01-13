@@ -6,21 +6,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// Track API usage
-async function trackUsage(userId: string, endpoint: string) {
-  try {
-    const today = new Date().toISOString().split('T')[0];
-    await supabase.from('api_usage').insert({
-      user_id: userId,
-      endpoint,
-      date: today,
-      request_count: 1,
-    });
-  } catch (err) {
-    console.error('Failed to track usage:', err);
-  }
-}
-
 // Sitemap locations to try
 const SITEMAP_PATHS = [
   '/sitemap.xml',
@@ -28,63 +13,11 @@ const SITEMAP_PATHS = [
   '/sitemaps.xml',
   '/sitemap/',
   '/sitemap/sitemap.xml',
-  '/wp-sitemap.xml',           // WordPress
+  '/wp-sitemap.xml',
   '/sitemap-index.xml',
   '/page-sitemap.xml',
   '/post-sitemap.xml',
 ];
-
-interface UrlGroup {
-  prefix: string;
-  label: string;
-  urls: string[];
-  count: number;
-}
-
-// Group URLs by their path prefix
-function groupUrls(urls: string[]): UrlGroup[] {
-  const groups: Map<string, string[]> = new Map();
-
-  for (const url of urls) {
-    try {
-      const urlObj = new URL(url);
-      const pathParts = urlObj.pathname.split('/').filter(Boolean);
-
-      // Determine group prefix (first path segment or root)
-      let prefix = '/';
-      let label = 'Homepage';
-
-      if (pathParts.length > 0) {
-        prefix = '/' + pathParts[0];
-        label = pathParts[0].charAt(0).toUpperCase() + pathParts[0].slice(1).replace(/-/g, ' ');
-      }
-
-      if (!groups.has(prefix)) {
-        groups.set(prefix, []);
-      }
-      groups.get(prefix)!.push(url);
-    } catch {
-      // Invalid URL, add to root group
-      if (!groups.has('/')) {
-        groups.set('/', []);
-      }
-      groups.get('/')!.push(url);
-    }
-  }
-
-  // Convert to array and sort by count (largest first)
-  const result: UrlGroup[] = [];
-  for (const [prefix, groupUrls] of groups) {
-    result.push({
-      prefix,
-      label: prefix === '/' ? 'Homepage' : prefix.slice(1).charAt(0).toUpperCase() + prefix.slice(2).replace(/-/g, ' '),
-      urls: groupUrls,
-      count: groupUrls.length,
-    });
-  }
-
-  return result.sort((a, b) => b.count - a.count);
-}
 
 // Parse XML sitemap content
 function parseSitemapXml(xmlContent: string): string[] {
@@ -118,7 +51,7 @@ async function trySitemapUrl(url: string): Promise<string[] | null> {
     const timeout = setTimeout(() => controller.abort(), 5000);
 
     const response = await fetch(url, {
-      headers: { 'User-Agent': 'ScreenshotPro Sitemap Crawler' },
+      headers: { 'User-Agent': 'ScreenshotPro API' },
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -131,10 +64,9 @@ async function trySitemapUrl(url: string): Promise<string[] | null> {
   }
 }
 
-// Check if URLs look like sitemap index entries (other sitemap URLs)
+// Check if URLs look like sitemap index entries
 function isSitemapIndex(urls: string[]): boolean {
   if (urls.length === 0) return false;
-  // If most URLs end with .xml, it's likely a sitemap index
   const xmlCount = urls.filter(u => u.endsWith('.xml')).length;
   return xmlCount > urls.length * 0.5;
 }
@@ -142,12 +74,10 @@ function isSitemapIndex(urls: string[]): boolean {
 // Expand sitemap index by fetching all sub-sitemaps
 async function expandSitemapIndex(sitemapUrls: string[]): Promise<string[]> {
   const allUrls: string[] = [];
-  for (const sitemapUrl of sitemapUrls.slice(0, 15)) { // Limit to first 15 sitemaps
+  for (const sitemapUrl of sitemapUrls.slice(0, 15)) {
     const subUrls = await trySitemapUrl(sitemapUrl);
     if (subUrls && subUrls.length > 0) {
-      // Check if this is also an index (nested)
       if (isSitemapIndex(subUrls)) {
-        // One level of nesting only
         for (const nestedUrl of subUrls.slice(0, 5)) {
           const nestedSubUrls = await trySitemapUrl(nestedUrl);
           if (nestedSubUrls) {
@@ -159,30 +89,59 @@ async function expandSitemapIndex(sitemapUrls: string[]): Promise<string[]> {
       }
     }
   }
-  return [...new Set(allUrls)]; // Remove duplicates
+  return [...new Set(allUrls)];
+}
+
+// Track API usage
+async function trackUsage(userId: string, apiKey: string, endpoint: string) {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    await supabase.from('api_usage').insert({
+      user_id: userId,
+      api_key: apiKey,
+      endpoint,
+      date: today,
+      request_count: 1,
+    });
+  } catch (err) {
+    console.error('Failed to track usage:', err);
+  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   try {
-    // Verify auth token
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Unauthorized' });
+    // Verify API key
+    const apiKey = req.headers['x-api-key'] as string;
+    if (!apiKey) {
+      return res.status(401).json({ error: 'API key is required in X-API-Key header' });
     }
 
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    // Look up user by API key
+    const { data: profile, error: profileError } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('api_key', apiKey)
+      .single();
 
-    if (authError || !user) {
-      return res.status(401).json({ error: 'Invalid token' });
+    if (profileError || !profile) {
+      return res.status(401).json({ error: 'Invalid API key' });
     }
 
-    // Track usage
-    await trackUsage(user.id, 'sitemap_discovery');
+    if (profile.status !== 'active') {
+      return res.status(403).json({ error: 'Account is not active' });
+    }
+
+    // Track API usage
+    await trackUsage(profile.id, apiKey, 'sitemap_discovery');
 
     const { domain } = req.body;
     if (!domain) {
@@ -196,20 +155,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     baseUrl = baseUrl.replace(/\/+$/, '');
 
-    // Create sitemap job
-    const { data: job, error: jobError } = await supabase
-      .from('sitemap_jobs')
-      .insert({
-        user_id: user.id,
-        domain: baseUrl,
-        status: 'processing',
-        urls: [],
-      })
-      .select()
-      .single();
-
-    if (jobError) throw jobError;
-
     // First try robots.txt for sitemap references
     let foundUrls: string[] = [];
     let source: string | null = null;
@@ -219,7 +164,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const timeout = setTimeout(() => controller.abort(), 5000);
 
       const response = await fetch(`${baseUrl}/robots.txt`, {
-        headers: { 'User-Agent': 'ScreenshotPro Sitemap Crawler' },
+        headers: { 'User-Agent': 'ScreenshotPro API' },
         signal: controller.signal,
       });
       clearTimeout(timeout);
@@ -246,7 +191,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const urls = await trySitemapUrl(sitemapUrl);
 
         if (urls && urls.length > 0) {
-          // Check if it's a sitemap index
           if (isSitemapIndex(urls)) {
             foundUrls = await expandSitemapIndex(urls);
           } else {
@@ -261,51 +205,26 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Return results
     if (foundUrls.length > 0) {
-      const groups = groupUrls(foundUrls);
-
-      await supabase
-        .from('sitemap_jobs')
-        .update({
-          status: 'completed',
-          urls: foundUrls,
-          source,
-          completed_at: new Date().toISOString(),
-        })
-        .eq('id', job.id);
-
       return res.json({
         success: true,
-        jobId: job.id,
+        domain: baseUrl,
         urls: foundUrls,
-        groups,
+        count: foundUrls.length,
         source,
-        message: `Found ${foundUrls.length} URLs in ${groups.length} groups`,
       });
     }
 
-    // No sitemap found
-    await supabase
-      .from('sitemap_jobs')
-      .update({
-        status: 'failed',
-        error_message: 'No sitemap found',
-        completed_at: new Date().toISOString(),
-      })
-      .eq('id', job.id);
-
     return res.json({
       success: false,
-      jobId: job.id,
+      domain: baseUrl,
       urls: [],
-      groups: [],
+      count: 0,
       source: null,
-      message: 'No sitemap found. You can start a Screaming Frog crawl.',
-      requiresCrawl: true,
+      message: 'No sitemap found for this domain',
     });
   } catch (error) {
-    console.error('Sitemap discovery error:', error);
+    console.error('API sitemap error:', error);
     return res.status(500).json({
       error: 'Failed to discover sitemap',
       message: (error as Error).message,
