@@ -210,13 +210,13 @@ export function GeneratorPage() {
       }
     }, 3000); // Poll every 3 seconds
 
-    // Stop polling after 6 minutes (job timeout is 5 min)
+    // Stop polling after 16 minutes (server timeout is 15 min)
     setTimeout(() => {
       clearInterval(pollInterval);
       // If still crawling after timeout, show timeout error
       setDiscoveryStatus('error');
       setDiscoveryMessage('Crawl timed out. Please try again.');
-    }, 6 * 60 * 1000);
+    }, 16 * 60 * 1000);
   };
 
   // Polling function for screenshot jobs
@@ -448,14 +448,14 @@ export function GeneratorPage() {
         // Start polling immediately as primary method (Realtime is unreliable with RLS)
         pollForJobStatus(crawlJobId, channel);
 
-        // Timeout after 5 minutes
+        // Timeout after 16 minutes (server timeout is 15 min)
         setTimeout(() => {
           channel.unsubscribe();
           if (discoveryStatus === 'crawling') {
             setDiscoveryStatus('error');
             setDiscoveryMessage('Crawl timed out. Please try again.');
           }
-        }, 5 * 60 * 1000);
+        }, 16 * 60 * 1000);
       } else {
         setDiscoveryStatus('error');
         setDiscoveryMessage('No URLs found.');
