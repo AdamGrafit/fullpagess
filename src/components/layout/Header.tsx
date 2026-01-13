@@ -14,7 +14,8 @@ export function Header() {
   };
 
   const tabs = [
-    { path: '/', label: 'Screenshot Generator' },
+    { path: '/', label: 'Generator' },
+    { path: '/projects', label: 'Projects' },
     { path: '/dashboard', label: 'Dashboard' },
   ];
 
@@ -109,6 +110,13 @@ export function Header() {
                         {profile?.email}
                       </p>
                     </div>
+                    <Link
+                      to="/projects"
+                      className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                      onClick={() => setIsUserMenuOpen(false)}
+                    >
+                      Projects
+                    </Link>
                     <Link
                       to="/dashboard"
                       className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"

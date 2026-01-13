@@ -4,6 +4,7 @@ import LoginPage from '../pages/LoginPage';
 import RegisterPage from '../pages/RegisterPage';
 import DashboardPage from '../pages/DashboardPage';
 import GeneratorPage from '../pages/GeneratorPage';
+import ProjectsPage from '../pages/ProjectsPage';
 
 export const router = createBrowserRouter([
   {
@@ -19,6 +20,14 @@ export const router = createBrowserRouter([
     element: (
       <AuthGuard>
         <GeneratorPage />
+      </AuthGuard>
+    ),
+  },
+  {
+    path: '/projects',
+    element: (
+      <AuthGuard>
+        <ProjectsPage />
       </AuthGuard>
     ),
   },
